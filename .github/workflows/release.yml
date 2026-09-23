@@ -1,0 +1,95 @@
+name: Release
+
+# release-please keeps a release PR open from conventional commits on main.
+# Merging it tags vX.Y.Z and creates the GitHub release; the jobs below then
+# publish that tag to npm and the Homebrew tap. They live in this workflow
+# because tags and releases created with GITHUB_TOKEN trigger no other workflow.
+
+on:
+  push:
+    branches: [main]
+
+permissions: {}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - id: release
+        uses: googleapis/release-please-action@v5
+
+  npm:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing (OIDC) and provenance
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - run: npm publish
+      - name: Verify the published package runs
+        env:
+          VERSION: ${{ needs.release-please.outputs.version }}
+        run: |
+          for _ in 1 2 3 4 5 6; do
+            out="$(npx -y "@kova1max/pullr@$VERSION" --version 2>/dev/null)" && break
+            sleep 10
+          done
+          test "$out" = "pullr $VERSION"
+
+  homebrew:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          repository: kova1max/homebrew-tap
+          ssh-key: ${{ secrets.TAP_DEPLOY_KEY }}
+      - name: Point the formula at the new tag
+        env:
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          url="https://github.com/kova1max/pullr/archive/refs/tags/$TAG.tar.gz"
+          sha="$(curl -fsSL "$url" | sha256sum | cut -d' ' -f1)"
+          sed -i -E \
+            -e "s|^  url \".*\"|  url \"$url\"|" \
+            -e "s|^  sha256 \".*\"|  sha256 \"$sha\"|" \
+            Formula/pullr.rb
+          git diff --exit-code --quiet && { echo "Formula already at $TAG"; exit 0; }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "pullr ${TAG#v}"
+          git push
+
+  verify-homebrew:
+    needs: [release-please, homebrew]
+    runs-on: macos-latest
+    permissions: {}
+    steps:
+      - name: Install from the tap and run the formula test
+        env:
+          VERSION: ${{ needs.release-please.outputs.version }}
+        run: |
+          brew install kova1max/tap/pullr
+          brew test kova1max/tap/pullr
+          test "$(pullr --version)" = "pullr $VERSION"

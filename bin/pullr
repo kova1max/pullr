@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+# Recursively find git repos under a directory and fast-forward pull each one.
+# Usage: pullr [--max-depth N] [DIR]
+set -euo pipefail
+
+VERSION="0.1.0" # x-release-please-version
+
+usage() {
+  cat <<'EOF'
+Usage: pullr [--max-depth N] [DIR]
+
+Finds git repositories under DIR (default: current directory) and runs
+`git pull --ff-only` in each. Does not descend into a repository once found.
+
+Options:
+  --max-depth N   How many directory levels below DIR to search (default: 2).
+                  0 = only DIR itself, 1 = DIR and its direct children, ...
+  -V, --version   Print the version.
+  -h, --help      Show this help.
+EOF
+}
+
+max_depth=2
+root=""
+
+while (($#)); do
+  case "$1" in
+    --max-depth) max_depth="${2:-}"; shift 2 || { usage >&2; exit 2; } ;;
+    --max-depth=*) max_depth="${1#*=}"; shift ;;
+    -h|--help) usage; exit 0 ;;
+    -V|--version) echo "pullr $VERSION"; exit 0 ;;
+    -*) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
+    *)
+      [[ -z "$root" ]] || { echo "Only one DIR allowed" >&2; exit 2; }
+      root="$1"; shift ;;
+  esac
+done
+
+[[ "$max_depth" =~ ^[0-9]+$ ]] || { echo "--max-depth must be a non-negative integer" >&2; exit 2; }
+root="${root:-.}"
+[[ -d "$root" ]] || { echo "Not a directory: $root" >&2; exit 2; }
+root="$(cd "$root" && pwd)"
+
+if [[ -t 1 ]]; then
+  green=$'\e[32m' yellow=$'\e[33m' red=$'\e[31m' dim=$'\e[2m' reset=$'\e[0m'
+else
+  green="" yellow="" red="" dim="" reset=""
+fi
+
+updated=0 current=0 skipped=0 failed=0
+failed_repos=()
+
+pull_repo() {
+  local repo="$1" rel="${1#"$root"}"
+  rel="${rel#/}"; rel="${rel:-.}"
+
+  local branch
+  if ! branch="$(git -C "$repo" symbolic-ref --quiet --short HEAD)"; then
+    printf '%s-%s %s %s(detached HEAD)%s\n' "$yellow" "$reset" "$rel" "$dim" "$reset"
+    skipped=$((skipped + 1)); return
+  fi
+  if ! git -C "$repo" rev-parse --quiet --verify '@{upstream}' >/dev/null 2>&1; then
+    printf '%s-%s %s %s(%s has no upstream)%s\n' "$yellow" "$reset" "$rel" "$dim" "$branch" "$reset"
+    skipped=$((skipped + 1)); return
+  fi
+
+  local before after out
+  before="$(git -C "$repo" rev-parse HEAD)"
+  if ! out="$(git -C "$repo" pull --ff-only 2>&1)"; then
+    printf '%sx%s %s %s(%s)%s\n' "$red" "$reset" "$rel" "$dim" "$branch" "$reset"
+    printf '    %s\n' "${out//$'\n'/$'\n'    }"
+    failed=$((failed + 1)); failed_repos+=("$rel"); return
+  fi
+  after="$(git -C "$repo" rev-parse HEAD)"
+
+  if [[ "$before" == "$after" ]]; then
+    printf '%s=%s %s %s(%s)%s\n' "$dim" "$reset" "$rel" "$dim" "$branch" "$reset"
+    current=$((current + 1))
+  else
+    local n
+    n="$(git -C "$repo" rev-list --count "$before..$after")"
+    printf '%s+%s %s %s(%s, %s new commit(s))%s\n' "$green" "$reset" "$rel" "$dim" "$branch" "$n" "$reset"
+    updated=$((updated + 1))
+  fi
+}
+
+walk() {
+  local dir="$1" depth="$2"
+  if [[ -e "$dir/.git" ]]; then
+    pull_repo "$dir"
+    return
+  fi
+  ((depth < max_depth)) || return 0
+  local child
+  for child in "$dir"/*/; do
+    [[ -d "$child" && ! -L "${child%/}" ]] || continue
+    walk "${child%/}" $((depth + 1))
+  done
+}
+
+walk "$root" 0
+
+total=$((updated + current + skipped + failed))
+if ((total == 0)); then
+  echo "No git repositories found under $root (max depth $max_depth)"
+  exit 0
+fi
+
+echo
+printf 'Repos: %d  %supdated: %d%s  up to date: %d  %sskipped: %d%s  %sfailed: %d%s\n' \
+  "$total" "$green" "$updated" "$reset" "$current" "$yellow" "$skipped" "$reset" "$red" "$failed" "$reset"
+if ((failed)); then
+  printf 'Failed: %s\n' "${failed_repos[*]}"
+  exit 1
+fi
