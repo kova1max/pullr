@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Recursively find git repos under a directory and fast-forward pull each one.
-# Usage: pullr [--jobs N] [--max-depth N] [--dry-run] [--rebase] [DIR]
+# Usage: pullr [--jobs N] [--max-depth N] [--dry-run] [--rebase] [--no-color] [DIR]
 set -euo pipefail
 
 VERSION="0.3.1" # set by the release workflow
@@ -24,6 +24,8 @@ Options:
                      refusing a branch that has diverged (git pull --rebase).
                      A rebase that hits a conflict is aborted, leaving the
                      repository as it was.
+      --no-color     Disable colored output. Also disabled when NO_COLOR is
+                     set (https://no-color.org) or output is not a terminal.
   -V, --version      Print the version.
   -h, --help         Show this help.
 EOF
@@ -32,6 +34,7 @@ EOF
 mode=pull
 jobs=4
 rebase=0
+color=1
 max_depth=2
 root=""
 
@@ -43,6 +46,7 @@ while (($#)); do
     --max-depth=*) max_depth="${1#*=}"; shift ;;
     -n|--dry-run) mode=dryrun; shift ;;
     -r|--rebase) rebase=1; shift ;;
+    --no-color) color=0; shift ;;
     -h|--help) usage; exit 0 ;;
     -V|--version) echo "pullr $VERSION"; exit 0 ;;
     -*) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -58,7 +62,8 @@ root="${root:-.}"
 [[ -d "$root" ]] || { echo "Not a directory: $root" >&2; exit 2; }
 root="$(cd "$root" && pwd)"
 
-if [[ -t 1 ]]; then
+# https://no-color.org: any non-empty NO_COLOR disables color
+if [[ "$color" == 1 && -z "${NO_COLOR:-}" && -t 1 ]]; then
   green=$'\e[32m' yellow=$'\e[33m' red=$'\e[31m' dim=$'\e[2m' reset=$'\e[0m'
 else
   green="" yellow="" red="" dim="" reset=""
@@ -121,7 +126,7 @@ pull_repo() {
     "$(update_note "$n" "$local_n" rebased)" "$reset"
 }
 
-# "N new commit(s)[, M rebased|to rebase]"
+# "N new commits[, M rebased|to rebase]", singular when N is 1
 update_note() {
   local n="$1" local_n="$2" verb="$3" note
   note="$n new commit$([[ "$n" == 1 ]] || printf s)"

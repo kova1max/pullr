@@ -12,7 +12,7 @@ everything current means `cd`-ing into each one.
 
 ```console
 $ pullr ~/work
-+ api (main, 3 new commit(s))
++ api (main, 3 new commits)
 = web (main)
 - scratch (main has no upstream)
 x infra (main)
@@ -77,6 +77,7 @@ pullr [options] [DIR]
 | `--max-depth N` | `2` | How many directory levels below `DIR` to search. `0` = only `DIR` itself, `1` = `DIR` and its direct children, ... |
 | `-n`, `--dry-run` | | Show what a run would do without pulling, see below |
 | `-r`, `--rebase` | off | Rebase local commits onto the upstream instead of refusing a diverged branch (`git pull --rebase`). A rebase that hits a conflict is aborted and the repository is left as it was. |
+| `--no-color` | | Disable colored output. Also disabled when the [`NO_COLOR`](https://no-color.org) environment variable is set, or when output is not a terminal. |
 | `-V`, `--version` | | Print the version |
 | `-h`, `--help` | | Show help |
 

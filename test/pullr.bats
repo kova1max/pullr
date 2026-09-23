@@ -271,3 +271,50 @@ x c-diverged (main)"
   [[ "$output" == *"would update: 1"* ]]
   [ "$(git -C ws/diverged log -1 --format=%s)" = "local" ]
 }
+
+# Runs pullr with stdout on a pseudo-terminal, so its color decision sees a TTY.
+pullr_tty() {
+  python3 - "${PULLR_BASH:-bash}" "$PULLR" "$@" <<'PY'
+import os, subprocess, sys
+leader, follower = os.openpty()
+proc = subprocess.Popen(sys.argv[1:], stdin=subprocess.DEVNULL, stdout=follower, stderr=follower)
+os.close(follower)
+out = b""
+while True:
+    try:
+        chunk = os.read(leader, 4096)
+    except OSError:  # Linux raises EIO once the child closes its side
+        break
+    if not chunk:
+        break
+    out += chunk
+sys.stdout.write(out.decode().replace("\r\n", "\n"))
+sys.exit(proc.wait())
+PY
+}
+
+@test "colors output on a terminal" {
+  clone repo
+  run pullr_tty ws
+  [[ "$output" == *$'\e[2m='* ]]
+}
+
+@test "NO_COLOR disables color on a terminal" {
+  clone repo
+  NO_COLOR=1 run pullr_tty ws
+  [[ "$output" == *"= repo (main)"* ]]
+  [[ "$output" != *$'\e['* ]]
+}
+
+@test "--no-color disables color on a terminal" {
+  clone repo
+  run pullr_tty --no-color ws
+  [[ "$output" == *"= repo (main)"* ]]
+  [[ "$output" != *$'\e['* ]]
+}
+
+@test "empty NO_COLOR keeps color, as the spec says" {
+  clone repo
+  NO_COLOR= run pullr_tty ws
+  [[ "$output" == *$'\e[2m='* ]]
+}
