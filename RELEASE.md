@@ -7,6 +7,9 @@ workflow from the Actions tab, or:
 gh workflow run release.yml -f bump=patch   # or minor / major
 ```
 
+Optionally pass `-f notes="..."` (Markdown) to open the release notes with a
+short summary; the generated list of pull requests follows it.
+
 It runs as `github-actions[bot]` and:
 
 1. bumps the version in `package.json` and `bin/pullr`, runs shellcheck and
