@@ -83,13 +83,16 @@ jobs:
       # Trusted publishing: npm accepts this job's OIDC token because the
       # package trusts kova1max/pullr + release.yml (set up with `npm trust`).
       - run: npm publish
+      # npm processes a new version for a few minutes before serving it
+      # (3.5 minutes for 0.4.0), so poll for up to 10.
       - name: Verify the published package runs
         env:
           VERSION: ${{ needs.release.outputs.version }}
         run: |
-          for _ in 1 2 3 4 5 6; do
+          out=""
+          for _ in $(seq 40); do
             out="$(npx -y "@kova1/pullr@$VERSION" --version 2>/dev/null)" && break
-            sleep 10
+            sleep 15
           done
           test "$out" = "pullr $VERSION"
 
