@@ -32,6 +32,12 @@ brew install kova1max/tap/pullr
 npm install -g @kova1/pullr
 ```
 
+To try it without installing anything:
+
+```sh
+npx @kova1/pullr --dry-run ~/work
+```
+
 Or copy [`bin/pullr`](bin/pullr) anywhere on your `PATH` - it is a single bash
 script with no dependencies beyond `git`.
 
