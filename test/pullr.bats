@@ -390,3 +390,9 @@ make_blocked() {
   [ "$(git -C ws/both rev-parse HEAD)" = "$before" ]
   [ "$(cat ws/both/file)" = "local" ]
 }
+
+@test "runs 8 jobs at a time by default" {
+  run pullr --help
+  [[ "$output" == *"(default: 8)"* ]]
+  grep -q '^jobs=8$' "$PULLR"
+}

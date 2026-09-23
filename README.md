@@ -74,7 +74,7 @@ pullr [options] [DIR]
 | Option&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; | Default | Meaning |
 | :--- | :--- | :--- |
 | `DIR` | current&nbsp;directory | Where to look for repositories |
-| `-j`, `--jobs N` | `4` | Work on up to `N` repositories in parallel. Output is buffered per repository and printed in discovery order, so it reads the same as a sequential run. With `N > 1` git never prompts for credentials; use `--jobs 1` for repositories that need an interactive login. |
+| `-j`, `--jobs N` | `8` | Work on up to `N` repositories in parallel. Output is buffered per repository and printed in discovery order, so it reads the same as a sequential run. With `N > 1` git never prompts for credentials; use `--jobs 1` for repositories that need an interactive login. |
 | `--max-depth N` | `2` | How many directory levels below `DIR` to search. `0` = only `DIR` itself, `1` = `DIR` and its direct children, ... |
 | `-n`, `--dry-run` | | Show what a run would do without pulling, see below |
 | `-r`, `--rebase` | off | Rebase local commits onto the upstream instead of refusing a diverged branch (`git pull --rebase`). A rebase that hits a conflict is aborted and the repository is left as it was. |
@@ -120,13 +120,13 @@ never modified. Exit codes match a real run.
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | Needs | bash and git | Python&nbsp;3.8+ | Python&nbsp;3.10+ | Perl | Go binary |
 | Finds repos | scans a directory | register first (`gita add`) | scans a directory | register first (`~/.mrconfig`) | register first (`mani.yaml`) |
-| Pulls in parallel | 4 at a time by default | all at once, no limit | no | opt-in | opt-in |
+| Pulls in parallel | 8 at a time by default | all at once, no limit | no | opt-in | opt-in |
 | Update | fetch + fast&#8209;forward | `git pull` | fetch + fast&#8209;forward | `git pull` | no built-in pull |
 | Merge commits | never | depends on your git config | never | depends on your git config | depends on your command |
 | Local changes in the way | reported as dirty | git's error | skipped | git's error | - |
 | Dry run | yes | no | no | no | prints commands |
 
-**Why "4 at a time" and not "all at once".** Many self-hosted git servers
+**Why "8 at a time" and not "all at once".** Many self-hosted git servers
 limit how many SSH connections can be opening at the same time; OpenSSH's
 default (`MaxStartups 10:30:100`) starts refusing them past 10. Fetching
 every repository at once then fails for reasons that have nothing to do with
