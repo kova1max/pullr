@@ -396,3 +396,94 @@ make_blocked() {
   [[ "$output" == *"(default: 8)"* ]]
   grep -q '^jobs=8$' "$PULLR"
 }
+
+# app.git has submodule lib (from lib.git); ws/app is a recursive clone whose
+# lib is on branch main. Local file remotes need protocol.file.allow.
+make_app_with_submodule() {
+  export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=protocol.file.allow GIT_CONFIG_VALUE_0=always
+  git init -q --bare -b main lib.git
+  git clone -q lib.git libw 2>/dev/null
+  git -C libw commit -q --allow-empty -m lib1 && git -C libw push -q origin main
+  git init -q --bare -b main app.git
+  git clone -q app.git appw 2>/dev/null
+  git -C appw submodule add -q "$BATS_TEST_TMPDIR/lib.git" lib 2>/dev/null
+  git -C appw commit -q -m "add lib" && git -C appw push -q origin main
+  git clone -q --recurse-submodules app.git ws/app 2>/dev/null
+  git -C ws/app/lib checkout -q main
+}
+
+advance_lib() {
+  git -C libw commit -q --allow-empty -m "lib $1" && git -C libw push -q origin main
+}
+
+bump_app_pointer() {
+  git -C appw/lib pull -q origin main 2>/dev/null
+  git -C appw commit -q -am "bump lib" && git -C appw push -q origin main
+}
+
+@test "without --submodules, submodules are left alone" {
+  make_app_with_submodule
+  advance_lib 2
+  local before
+  before="$(git -C ws/app/lib rev-parse HEAD)"
+  run pullr ws
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"lib"* ]]
+  [ "$(git -C ws/app/lib rev-parse HEAD)" = "$before" ]
+}
+
+@test "--submodules fast-forwards a submodule on its branch, indented under its parent" {
+  make_app_with_submodule
+  advance_lib 2
+  run pullr --submodules ws
+  [ "$status" -eq 0 ]
+  [[ "$output" == "= app (main)
+  + app/lib (main, 1 new commit)"* ]]
+  [[ "$output" == *"Repos: 2  updated: 1  up to date: 1"* ]]
+  [ "$(git -C ws/app/lib rev-parse HEAD)" = "$(git -C lib.git rev-parse main)" ]
+  [ "$(git -C ws/app/lib branch --show-current)" = "main" ]
+}
+
+@test "--submodules skips a submodule on a detached HEAD" {
+  make_app_with_submodule
+  git -C ws/app/lib checkout -q --detach
+  run pullr --submodules -j 1 ws
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"  - app/lib (detached HEAD)"* ]]
+}
+
+@test "--submodules reports a dirty submodule by its full path" {
+  make_app_with_submodule
+  echo base >libw/file && git -C libw add file && git -C libw commit -q -m base && git -C libw push -q origin main
+  git -C ws/app/lib pull -q
+  echo upstream >libw/file && git -C libw commit -q -am upstream && git -C libw push -q origin main
+  echo local >ws/app/lib/file
+  run pullr --submodules ws
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"  ~ app/lib (main, 1 commit held back by local changes)"* ]]
+  [[ "$output" == *"Dirty: app/lib"* ]]
+}
+
+@test "a submodule on its own branch does not make the parent look dirty" {
+  make_app_with_submodule
+  git -C ws/app/lib commit -q --allow-empty -m "my lib work"
+  advance_lib 2
+  bump_app_pointer
+  run pullr --dry-run ws
+  [[ "$output" == *"+ app (main, 1 new commit)"* ]]
+  run pullr --rebase ws
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"+ app (main, 1 new commit)"* ]]
+  [ "$(git -C ws/app/lib log -1 --format=%s)" = "my lib work" ]
+}
+
+@test "honours submodule.recurse like git pull does" {
+  make_app_with_submodule
+  git -C ws/app config submodule.recurse true
+  advance_lib 2
+  bump_app_pointer
+  run pullr ws
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"+ app (main, 1 new commit)"* ]]
+  [ "$(git -C ws/app/lib rev-parse HEAD)" = "$(git -C lib.git rev-parse main)" ]
+}
