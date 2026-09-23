@@ -21,4 +21,5 @@ It runs as `github-actions[bot]` and:
 5. points the formula in
    [kova1max/homebrew-tap](https://github.com/kova1max/homebrew-tap) at the
    new tag, using the `TAP_DEPLOY_KEY` secret (a write deploy key on the tap);
-6. installs from npm and from the tap to verify both.
+6. installs from the tap on macOS to verify the formula. (npm is not re-checked:
+   it can take over ten minutes to serve a new version.)
