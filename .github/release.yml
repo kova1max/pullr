@@ -1,0 +1,28 @@
+# Categories for the GitHub release notes that the Release workflow generates
+# (gh release create --generate-notes). Notes list merged pull requests, so
+# changes that should appear in them go through a PR with one of these labels.
+changelog:
+  exclude:
+    labels:
+      - duplicate
+      - invalid
+      - wontfix
+  categories:
+    - title: Breaking changes
+      labels:
+        - breaking-change
+    - title: Features
+      labels:
+        - enhancement
+    - title: Bug fixes
+      labels:
+        - bug
+    - title: Documentation
+      labels:
+        - documentation
+    - title: Maintenance
+      labels:
+        - maintenance
+    - title: Other changes
+      labels:
+        - "*"
