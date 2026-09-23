@@ -76,7 +76,9 @@ Releases are automated with
    `CHANGELOG.md`.
 3. Merging that PR tags `vX.Y.Z` and creates the GitHub release, then the
    release workflow:
-   - publishes to npm via trusted publishing (OIDC, no token), with provenance;
+   - publishes to npm via trusted publishing (OIDC, no token), with provenance
+     (the very first publish uses a temporary `NPM_TOKEN` secret, since npm
+     only allows trusted publishing for a package that already exists);
    - points the formula in
      [kova1max/homebrew-tap](https://github.com/kova1max/homebrew-tap) at the
      new tag, using the `TAP_DEPLOY_KEY` secret (a write deploy key on the tap);
