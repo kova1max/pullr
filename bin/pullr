@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Recursively find git repos under a directory and fast-forward pull each one.
-# Usage: pullr [--jobs N] [--max-depth N] [--dry-run] [--rebase] [--no-color] [DIR]
+# Usage: pullr [--jobs N] [--max-depth N] [--dry-run] [--rebase] [--submodules] [--no-color] [DIR]
 set -euo pipefail
 
 VERSION="0.6.0" # set by the release workflow
@@ -24,6 +24,9 @@ Options:
                      refusing a branch that has diverged (git pull --rebase).
                      A rebase that hits a conflict is aborted, leaving the
                      repository as it was.
+      --submodules   Also fast-forward each submodule that is checked out on a
+                     branch, with the same rules as any other repository.
+                     Submodules on a detached HEAD are skipped.
       --no-color     Disable colored output. Also disabled when NO_COLOR is
                      set (https://no-color.org) or output is not a terminal.
   -V, --version      Print the version.
@@ -34,6 +37,7 @@ EOF
 mode=pull
 jobs=8
 rebase=0
+submodules=0
 color=1
 max_depth=2
 root=""
@@ -46,6 +50,7 @@ while (($#)); do
     --max-depth=*) max_depth="${1#*=}"; shift ;;
     -n|--dry-run) mode=dryrun; shift ;;
     -r|--rebase) rebase=1; shift ;;
+    --submodules) submodules=1; shift ;;
     --no-color) color=0; shift ;;
     -h|--help) usage; exit 0 ;;
     -V|--version) echo "pullr $VERSION"; exit 0 ;;
@@ -142,9 +147,24 @@ commits() {
   printf '%s commit%s' "$1" "$([[ "$1" == 1 ]] || printf s)"
 }
 
-# Uncommitted changes to tracked files, staged or not.
+# Uncommitted changes to tracked files, staged or not. A submodule checked out
+# at a different commit than the one recorded is not one: git neither refuses
+# to update over it nor touches it.
 has_tracked_changes() {
-  ! git -C "$1" diff --quiet HEAD --
+  ! git -C "$1" diff --quiet --ignore-submodules HEAD --
+}
+
+has_local_changes() {
+  [[ -n "$(git -C "$1" status --porcelain --ignore-submodules=all)" ]]
+}
+
+# Mirror `git pull` for people who set submodule.recurse: after the update,
+# check submodules out at the commits the parent now records. With
+# --submodules each one is fast-forwarded on its own branch instead.
+sync_submodules() {
+  [[ "$submodules" == 0 ]] || return 0
+  [[ "$(git -C "$1" config --type=bool --get submodule.recurse 2>/dev/null)" == true ]] || return 0
+  git -C "$1" submodule update --recursive 2>&1
 }
 
 pull_repo() {
@@ -157,8 +177,8 @@ pull_repo() {
   elif [[ "$ahead" == 0 ]]; then
     # git refuses, touching nothing, when local changes are in the way
     if out="$(git -C "$repo" merge --ff-only --quiet '@{upstream}' 2>&1)"; then
-      report_updated "$rel" "$branch" "$behind" 0 ""
-    elif [[ -n "$(git -C "$repo" status --porcelain)" ]]; then
+      report_synced "$repo" "$rel" "$branch" "$behind" 0 ""
+    elif has_local_changes "$repo"; then
       report_dirty "$rel" "$branch" "$behind"
     else
       report_failed "$rel" "$branch" "$out"
@@ -168,17 +188,27 @@ pull_repo() {
   elif has_tracked_changes "$repo"; then
     report_dirty "$rel" "$branch" "$behind"
   elif out="$(git -C "$repo" rebase --quiet '@{upstream}' 2>&1)"; then
-    report_updated "$rel" "$branch" "$behind" "$ahead" rebased
+    report_synced "$repo" "$rel" "$branch" "$behind" "$ahead" rebased
   else
     # A rebase that stopped on a conflict must not leave the repository
     # mid-rebase; --abort succeeds only when one is in progress.
     if git -C "$repo" rebase --abort >/dev/null 2>&1; then
       report_failed "$rel" "$branch" "$out"
-    elif [[ -n "$(git -C "$repo" status --porcelain)" ]]; then
+    elif has_local_changes "$repo"; then
       report_dirty "$rel" "$branch" "$behind"
     else
       report_failed "$rel" "$branch" "$out"
     fi
+  fi
+}
+
+# The repository was updated; report it, unless syncing submodules failed.
+report_synced() {
+  local out
+  if out="$(sync_submodules "$1")"; then
+    report_updated "$2" "$3" "$4" "$5" "$6"
+  else
+    report_failed "$2" "$3" "updated, but updating submodules failed:"$'\n'"$out"
   fi
 }
 
@@ -187,7 +217,7 @@ pull_repo() {
 changes_block_update() {
   local repo="$1" incoming local_paths
   incoming="$(git -C "$repo" diff --name-only HEAD '@{upstream}')"
-  local_paths="$(git -C "$repo" status --porcelain --untracked-files=all | cut -c4-)"
+  local_paths="$(git -C "$repo" status --porcelain --untracked-files=all --ignore-submodules=all | cut -c4-)"
   [[ -n "$incoming" && -n "$local_paths" ]] || return 1
   printf '%s\n' "$local_paths" | grep -qFxf <(printf '%s\n' "$incoming")
 }
@@ -225,11 +255,12 @@ worker() {
 
 # --- discovery ---------------------------------------------------------------
 
-repos=()
+repos=() nested=()
 walk() {
   local dir="$1" depth="$2"
   if [[ -e "$dir/.git" ]]; then
-    repos+=("$dir")
+    repos+=("$dir") nested+=(0)
+    [[ "$submodules" == 0 ]] || add_submodules "$dir"
     return
   fi
   ((depth < max_depth)) || return 0
@@ -239,6 +270,17 @@ walk() {
     walk "${child%/}" $((depth + 1))
   done
 }
+# Checked-out submodules, recursively, in git's order; uninitialized ones
+# have no checkout to update and are left out.
+add_submodules() {
+  local sub
+  # shellcheck disable=SC2016  # $displaypath is expanded by git submodule foreach
+  while IFS= read -r sub; do
+    [[ -n "$sub" ]] || continue
+    repos+=("$1/$sub") nested+=(1)
+  done < <(git -C "$1" submodule foreach --quiet --recursive 'printf "%s\n" "$displaypath"' 2>/dev/null)
+}
+
 walk "$root" 0
 
 count=${#repos[@]}
@@ -256,6 +298,8 @@ failed_repos=() dirty_repos=()
 
 consume() {
   local text="$1" head="${1%%$'\n'*}" body="${1#*$'\n'}"
+  # a submodule's lines sit under its parent's
+  [[ "${2:-0}" == 0 ]] || body="  ${body//$'\n'/$'\n'  }"
   local category="${head%%$'\t'*}" label="${head#*$'\t'}"
   case "$category" in
     updated) updated=$((updated + 1)) ;;
@@ -272,8 +316,8 @@ if ((jobs > 1 && count > 1)); then
   scratch="$(mktemp -d)"
   trap 'rm -rf "$scratch"' EXIT
   export GIT_TERMINAL_PROMPT=0
-  export mode rebase root green yellow red dim reset
-  export -f worker pull_repo dryrun_repo repo_label indented prepare report_failed report_diverged report_dirty report_current report_updated commits has_tracked_changes changes_block_update
+  export mode rebase submodules root green yellow red dim reset
+  export -f worker pull_repo dryrun_repo repo_label indented prepare report_failed report_diverged report_dirty report_current report_updated report_synced commits has_tracked_changes has_local_changes sync_submodules changes_block_update
   # shellcheck disable=SC2016  # the single-quoted body runs inside the child shell
   for ((i = 0; i < count; i++)); do printf '%s\0%s\0' "$i" "${repos[i]}"; done |
     xargs -0 -n 2 -P "$jobs" "$BASH" -c 'worker "$@"' _ "$scratch" &
@@ -287,12 +331,12 @@ if ((jobs > 1 && count > 1)); then
       fi
       sleep 0.1
     done
-    consume "$(cat "$scratch/$i.done")"
+    consume "$(cat "$scratch/$i.done")" "${nested[i]}"
   done
   wait "$pool" || true
 else
-  for repo in "${repos[@]}"; do
-    consume "$("${mode}_repo" "$repo")"
+  for ((i = 0; i < count; i++)); do
+    consume "$("${mode}_repo" "${repos[i]}")" "${nested[i]}"
   done
 fi
 

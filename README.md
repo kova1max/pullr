@@ -61,8 +61,12 @@ first. It will never:
   incoming files don't stop the update.
 - **Touch a repository on a detached `HEAD`**, or a branch with no upstream.
   Both are skipped.
-- **Enter a nested repository.** Repositories inside another repository,
-  including submodules, are left to their parent.
+- **Enter a nested repository.** Repositories inside another repository are
+  left to their parent.
+- **Move a submodule off its branch.** With `--submodules`, a submodule is
+  only ever fast-forwarded on the branch it is on. (If you set git's
+  `submodule.recurse`, pullr does what `git pull` does with it: checks
+  submodules out at the recorded commit.)
 - **Follow symlinked directories.**
 
 ## Usage
@@ -78,6 +82,7 @@ pullr [options] [DIR]
 | `--max-depth N` | `2` | How many directory levels below `DIR` to search. `0` = only `DIR` itself, `1` = `DIR` and its direct children, ... |
 | `-n`, `--dry-run` | | Show what a run would do without pulling, see below |
 | `-r`, `--rebase` | off | Rebase local commits onto the upstream instead of refusing a diverged branch (`git pull --rebase`). A rebase that hits a conflict is aborted and the repository is left as it was. |
+| `--submodules` | off | Also fast-forward each submodule that is checked out on a branch, see below |
 | `--no-color` | | Disable colored output. Also disabled when the [`NO_COLOR`](https://no-color.org) environment variable is set, or when output is not a terminal. |
 | `-V`, `--version` | | Print the version |
 | `-h`, `--help` | | Show help |
@@ -113,6 +118,26 @@ remote as it is now, then prints the same lines a real run would (with
 `x`; whether the rebase would conflict is only known by running it). Fetching
 only updates remote-tracking refs: the working tree and current branch are
 never modified. Exit codes match a real run.
+
+### Submodules
+
+By default pullr updates a repository the way `git pull` does: submodules stay
+where they are, unless you set git's `submodule.recurse`, in which case they
+are checked out at the commits the parent now records, as `git pull` would.
+
+`--submodules` is for working inside submodules. Each submodule that is
+checked out on a branch is treated as a repository of its own - fetched,
+fast-forwarded with the same rules, and listed under its parent:
+
+```console
+$ pullr --submodules ~/work
++ app (main, 2 new commits)
+  + app/lib/core (main, 5 new commits)
+  - app/vendor/sdk (detached HEAD)
+```
+
+Submodules on a detached HEAD (git's default after `git submodule update`) are
+skipped, and uninitialized ones are left out.
 
 ## How it compares
 
