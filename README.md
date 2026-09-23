@@ -52,6 +52,7 @@ pullr [options] [DIR]
 | `-j`, `--jobs N` | `4` | Work on up to `N` repositories in parallel. Output is buffered per repository and printed in discovery order, so it reads the same as a sequential run. With `N > 1` git never prompts for credentials; use `--jobs 1` for repositories that need an interactive login. |
 | `--max-depth N` | `2` | How many directory levels below `DIR` to search. `0` = only `DIR` itself, `1` = `DIR` and its direct children, ... |
 | `-n`, `--dry-run` | | Show what a run would do without pulling, see below |
+| `-r`, `--rebase` | off | Rebase local commits onto the upstream instead of refusing a diverged branch (`git pull --rebase`). A rebase that hits a conflict is aborted and the repository is left as it was. |
 | `-V`, `--version` | | Print the version |
 | `-h`, `--help` | | Show help |
 
@@ -59,6 +60,10 @@ Behaviour:
 
 - Runs `git pull --ff-only`, so it never creates merge commits. A branch that
   has diverged from its upstream is reported as failed and left untouched.
+  With `--rebase`, that branch's local commits are rebased onto the upstream
+  instead, and the line reads `+ api (main, 3 new commits, 2 rebased)`. There
+  is no auto-stash: a dirty tree makes git refuse the rebase, which is
+  reported as failed.
 - Does not descend into a repository once found - nested repositories and
   submodules are left to their parent.
 - Skips repositories on a detached `HEAD` and branches with no upstream.
@@ -86,7 +91,9 @@ Failed: infra
 ```
 
 It runs `git fetch` in each repository first, so the answer reflects the
-remote as it is now, then prints the same lines a real run would. Fetching
+remote as it is now, then prints the same lines a real run would (with
+`--rebase`, a diverged repository shows as `+ ... , 2 to rebase` instead of
+`x`; whether the rebase would conflict is only known by running it). Fetching
 only updates remote-tracking refs: the working tree and current branch are
 never modified. Exit codes match a real run.
 

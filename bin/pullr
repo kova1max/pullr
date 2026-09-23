@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Recursively find git repos under a directory and fast-forward pull each one.
-# Usage: pullr [--jobs N] [--max-depth N] [--dry-run] [DIR]
+# Usage: pullr [--jobs N] [--max-depth N] [--dry-run] [--rebase] [DIR]
 set -euo pipefail
 
 VERSION="0.2.0" # set by the release workflow
@@ -20,6 +20,10 @@ Options:
                      0 = only DIR itself, 1 = DIR and its direct children, ...
   -n, --dry-run      Fetch, then show what a run would do to each repository
                      without pulling anything.
+  -r, --rebase       Rebase local commits onto the upstream instead of
+                     refusing a branch that has diverged (git pull --rebase).
+                     A rebase that hits a conflict is aborted, leaving the
+                     repository as it was.
   -V, --version      Print the version.
   -h, --help         Show this help.
 EOF
@@ -27,6 +31,7 @@ EOF
 
 mode=pull
 jobs=4
+rebase=0
 max_depth=2
 root=""
 
@@ -37,6 +42,7 @@ while (($#)); do
     --max-depth) max_depth="${2:-}"; shift 2 || { usage >&2; exit 2; } ;;
     --max-depth=*) max_depth="${1#*=}"; shift ;;
     -n|--dry-run) mode=dryrun; shift ;;
+    -r|--rebase) rebase=1; shift ;;
     -h|--help) usage; exit 0 ;;
     -V|--version) echo "pullr $VERSION"; exit 0 ;;
     -*) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -88,9 +94,12 @@ pull_repo() {
     return
   fi
 
-  local before after out
+  local before after out how=--ff-only
+  [[ "$rebase" == 0 ]] || how=--rebase
   before="$(git -C "$repo" rev-parse HEAD)"
-  if ! out="$(git -C "$repo" pull --ff-only 2>&1)"; then
+  if ! out="$(git -C "$repo" pull "$how" 2>&1)"; then
+    # a conflicting rebase must not leave the repository mid-rebase
+    [[ "$rebase" == 0 ]] || git -C "$repo" rebase --abort >/dev/null 2>&1 || true
     printf 'failed\t%s\n' "$rel"
     printf '%sx%s %s %s(%s)%s\n' "$red" "$reset" "$rel" "$dim" "$branch" "$reset"
     indented "$out"
@@ -101,13 +110,23 @@ pull_repo() {
   if [[ "$before" == "$after" ]]; then
     echo current
     printf '%s=%s %s %s(%s)%s\n' "$dim" "$reset" "$rel" "$dim" "$branch" "$reset"
-  else
-    local n
-    n="$(git -C "$repo" rev-list --count "$before..$after")"
-    echo updated
-    printf '%s+%s %s %s(%s, %s new commit%s)%s\n' \
-      "$green" "$reset" "$rel" "$dim" "$branch" "$n" "$([[ "$n" == 1 ]] || printf s)" "$reset"
+    return
   fi
+  # New upstream commits, and (after a rebase) local commits now on top of them.
+  local n local_n=0
+  n="$(git -C "$repo" rev-list --count "$before..@{upstream}")"
+  [[ "$rebase" == 0 ]] || local_n="$(git -C "$repo" rev-list --count '@{upstream}..HEAD')"
+  echo updated
+  printf '%s+%s %s %s(%s, %s)%s\n' "$green" "$reset" "$rel" "$dim" "$branch" \
+    "$(update_note "$n" "$local_n" rebased)" "$reset"
+}
+
+# "N new commit(s)[, M rebased|to rebase]"
+update_note() {
+  local n="$1" local_n="$2" verb="$3" note
+  note="$n new commit$([[ "$n" == 1 ]] || printf s)"
+  [[ "$local_n" == 0 ]] || note+=", $local_n $verb"
+  printf '%s' "$note"
 }
 
 dryrun_repo() {
@@ -138,14 +157,15 @@ dryrun_repo() {
   behind="${counts%%[[:space:]]*}"
   ahead="${counts##*[[:space:]]}"
 
-  if [[ "$behind" != 0 && "$ahead" != 0 ]]; then
+  if [[ "$behind" != 0 && "$ahead" != 0 && "$rebase" == 0 ]]; then
     printf 'failed\t%s\n' "$rel"
     printf '%sx%s %s %s(%s)%s\n' "$red" "$reset" "$rel" "$dim" "$branch" "$reset"
     indented "diverged from upstream (behind $behind, ahead $ahead): cannot fast-forward"
   elif [[ "$behind" != 0 ]]; then
+    # without --rebase this branch is only reached when ahead is 0
     echo updated
-    printf '%s+%s %s %s(%s, %s new commit%s)%s\n' \
-      "$green" "$reset" "$rel" "$dim" "$branch" "$behind" "$([[ "$behind" == 1 ]] || printf s)" "$reset"
+    printf '%s+%s %s %s(%s, %s)%s\n' "$green" "$reset" "$rel" "$dim" "$branch" \
+      "$(update_note "$behind" "$ahead" "to rebase")" "$reset"
   else
     echo current
     printf '%s=%s %s %s(%s)%s\n' "$dim" "$reset" "$rel" "$dim" "$branch" "$reset"
@@ -209,8 +229,8 @@ if ((jobs > 1 && count > 1)); then
   scratch="$(mktemp -d)"
   trap 'rm -rf "$scratch"' EXIT
   export GIT_TERMINAL_PROMPT=0
-  export mode root green yellow red dim reset
-  export -f worker pull_repo dryrun_repo repo_label indented
+  export mode rebase root green yellow red dim reset
+  export -f worker pull_repo dryrun_repo repo_label indented update_note
   # shellcheck disable=SC2016  # the single-quoted body runs inside the child shell
   for ((i = 0; i < count; i++)); do printf '%s\0%s\0' "$i" "${repos[i]}"; done |
     xargs -0 -n 2 -P "$jobs" "$BASH" -c 'worker "$@"' _ "$scratch" &

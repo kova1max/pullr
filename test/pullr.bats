@@ -230,3 +230,44 @@ x c-diverged (main)"
   [[ "$output" == *"x broken (main)"* ]]
   [[ "$output" == *"Failed: broken"* ]]
 }
+
+@test "--rebase puts local commits on top of a diverged upstream" {
+  clone diverged; clone behind
+  git -C ws/diverged commit -q --allow-empty -m local
+  advance_origin
+  run pullr --rebase ws
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"+ behind (main, 2 new commits)"* ]]
+  [[ "$output" == *"+ diverged (main, 2 new commits, 1 rebased)"* ]]
+  [[ "$output" == *"updated: 2"* ]]
+  [ "$(git -C ws/diverged rev-parse HEAD~1)" = "$(git -C origin.git rev-parse main)" ]
+  [ "$(git -C ws/diverged log -1 --format=%s)" = "local" ]
+}
+
+@test "--rebase aborts a conflicting rebase and leaves the repository untouched" {
+  clone conflict
+  echo theirs >seed/file && git -C seed add file && git -C seed commit -q -m theirs && git -C seed push -q origin main
+  echo ours >ws/conflict/file && git -C ws/conflict add file && git -C ws/conflict commit -q -m ours
+  local before
+  before="$(git -C ws/conflict rev-parse HEAD)"
+  run pullr -r ws
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"x conflict (main)"* ]]
+  [[ "$output" == *"CONFLICT"* ]]
+  [[ "$output" == *"Failed: conflict"* ]]
+  [ "$(git -C ws/conflict rev-parse HEAD)" = "$before" ]
+  [ "$(cat ws/conflict/file)" = "ours" ]
+  ! git -C ws/conflict rev-parse --verify --quiet REBASE_HEAD
+  [ -z "$(git -C ws/conflict status --porcelain)" ]
+}
+
+@test "--dry-run --rebase predicts a rebase instead of a failure" {
+  clone diverged
+  git -C ws/diverged commit -q --allow-empty -m local
+  advance_origin
+  run pullr --dry-run --rebase ws
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"+ diverged (main, 2 new commits, 1 to rebase)"* ]]
+  [[ "$output" == *"would update: 1"* ]]
+  [ "$(git -C ws/diverged log -1 --format=%s)" = "local" ]
+}
