@@ -21,7 +21,7 @@ Failed: infra
 
 ```sh
 # Homebrew
-brew install kova1max/tap/pullr   # after that, plain `pullr` works too
+brew install kova1max/tap/pullr
 
 # npm
 npm install -g @kova1/pullr
