@@ -14,11 +14,13 @@ everything current means `cd`-ing into each one.
 $ pullr ~/work
 + api (main, 3 new commits)
 = web (main)
+~ docs (main, 2 commits held back by local changes)
 - scratch (main has no upstream)
 x infra (main)
-    fatal: Not possible to fast-forward, aborting.
+    diverged from upstream (behind 2, ahead 1): cannot fast-forward
 
-Repos: 4  updated: 1  up to date: 1  skipped: 1  failed: 1
+Repos: 5  updated: 1  up to date: 1  dirty: 1  skipped: 1  failed: 1
+Dirty: docs
 Failed: infra
 ```
 
@@ -56,8 +58,10 @@ first. It will never:
   failed and left exactly as it was. Rebasing it is opt-in with `--rebase`,
   and a rebase that hits a conflict is aborted, leaving the repository as it
   was.
-- **Stash or discard your changes.** There is no auto-stash; if git refuses
-  to update a dirty working tree, the repository is reported as failed.
+- **Stash, overwrite or discard your changes.** There is no auto-stash. If
+  local edits or untracked files are in the way of incoming changes, the
+  repository is reported as dirty and left as it was; edits that don't touch
+  incoming files don't stop the update.
 - **Touch a repository on a detached `HEAD`**, or a branch with no upstream.
   Both are skipped.
 - **Enter a nested repository.** Repositories inside another repository,
@@ -83,9 +87,11 @@ pullr [options] [DIR]
 
 ### Output
 
-Each repository gets one line: `+` updated, `=` already up to date, `-`
-skipped, `x` failed (with git's output indented below it). Exits `1` if any
-pull failed, `2` on invalid arguments, `0` otherwise.
+Each repository gets one line: `+` updated, `=` already up to date, `~`
+dirty (local changes are in the way of the update, which is held back), `-`
+skipped, `x` failed (with the reason indented below it). Exits `1` if any
+pull failed, `2` on invalid arguments, `0` otherwise; a dirty repository is
+not a failure.
 
 ### Dry run
 
@@ -100,7 +106,7 @@ x infra (main)
     diverged from upstream (behind 2, ahead 1): cannot fast-forward
 - scratch (main has no upstream)
 
-Repos: 4  would update: 1  up to date: 1  skipped: 1  would fail: 1
+Repos: 4  would update: 1  up to date: 1  dirty: 0  skipped: 1  would fail: 1
 Failed: infra
 ```
 
