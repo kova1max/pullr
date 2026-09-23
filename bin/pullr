@@ -1,32 +1,42 @@
 #!/usr/bin/env bash
 # Recursively find git repos under a directory and fast-forward pull each one.
-# Usage: pullr [--max-depth N] [DIR]
+# Usage: pullr [--jobs N] [--max-depth N] [--dry-run] [DIR]
 set -euo pipefail
 
 VERSION="0.1.1" # set by the release workflow
 
 usage() {
   cat <<'EOF'
-Usage: pullr [--max-depth N] [DIR]
+Usage: pullr [options] [DIR]
 
 Finds git repositories under DIR (default: current directory) and runs
 `git pull --ff-only` in each. Does not descend into a repository once found.
 
 Options:
-  --max-depth N   How many directory levels below DIR to search (default: 2).
-                  0 = only DIR itself, 1 = DIR and its direct children, ...
-  -V, --version   Print the version.
-  -h, --help      Show this help.
+  -j, --jobs N       Work on up to N repositories in parallel (default: 4).
+                     Output is buffered per repository and printed in order.
+                     With N > 1 git never prompts for credentials.
+      --max-depth N  How many directory levels below DIR to search (default: 2).
+                     0 = only DIR itself, 1 = DIR and its direct children, ...
+  -n, --dry-run      Fetch, then show what a run would do to each repository
+                     without pulling anything.
+  -V, --version      Print the version.
+  -h, --help         Show this help.
 EOF
 }
 
+mode=pull
+jobs=4
 max_depth=2
 root=""
 
 while (($#)); do
   case "$1" in
+    -j|--jobs) jobs="${2:-}"; shift 2 || { usage >&2; exit 2; } ;;
+    --jobs=*) jobs="${1#*=}"; shift ;;
     --max-depth) max_depth="${2:-}"; shift 2 || { usage >&2; exit 2; } ;;
     --max-depth=*) max_depth="${1#*=}"; shift ;;
+    -n|--dry-run) mode=dryrun; shift ;;
     -h|--help) usage; exit 0 ;;
     -V|--version) echo "pullr $VERSION"; exit 0 ;;
     -*) echo "Unknown option: $1" >&2; usage >&2; exit 2 ;;
@@ -36,6 +46,7 @@ while (($#)); do
   esac
 done
 
+[[ "$jobs" =~ ^[1-9][0-9]*$ ]] || { echo "--jobs must be a positive integer" >&2; exit 2; }
 [[ "$max_depth" =~ ^[0-9]+$ ]] || { echo "--max-depth must be a non-negative integer" >&2; exit 2; }
 root="${root:-.}"
 [[ -d "$root" ]] || { echo "Not a directory: $root" >&2; exit 2; }
@@ -47,47 +58,116 @@ else
   green="" yellow="" red="" dim="" reset=""
 fi
 
-updated=0 current=0 skipped=0 failed=0
-failed_repos=()
+# --- per-repository work -----------------------------------------------------
+# Each *_repo function prints a result: the first line is the category used
+# for the summary, the rest is what the user sees. That shape lets the same
+# functions run inline or inside a worker whose output is buffered to a file.
+
+repo_label() {
+  local rel="${1#"$root"}"
+  rel="${rel#/}"
+  printf '%s' "${rel:-.}"
+}
+
+indented() {
+  printf '    %s\n' "${1//$'\n'/$'\n'    }"
+}
 
 pull_repo() {
-  local repo="$1" rel="${1#"$root"}"
-  rel="${rel#/}"; rel="${rel:-.}"
+  local repo="$1" rel branch
+  rel="$(repo_label "$repo")"
 
-  local branch
   if ! branch="$(git -C "$repo" symbolic-ref --quiet --short HEAD)"; then
+    echo skipped
     printf '%s-%s %s %s(detached HEAD)%s\n' "$yellow" "$reset" "$rel" "$dim" "$reset"
-    skipped=$((skipped + 1)); return
+    return
   fi
   if ! git -C "$repo" rev-parse --quiet --verify '@{upstream}' >/dev/null 2>&1; then
+    echo skipped
     printf '%s-%s %s %s(%s has no upstream)%s\n' "$yellow" "$reset" "$rel" "$dim" "$branch" "$reset"
-    skipped=$((skipped + 1)); return
+    return
   fi
 
   local before after out
   before="$(git -C "$repo" rev-parse HEAD)"
   if ! out="$(git -C "$repo" pull --ff-only 2>&1)"; then
+    printf 'failed\t%s\n' "$rel"
     printf '%sx%s %s %s(%s)%s\n' "$red" "$reset" "$rel" "$dim" "$branch" "$reset"
-    printf '    %s\n' "${out//$'\n'/$'\n'    }"
-    failed=$((failed + 1)); failed_repos+=("$rel"); return
+    indented "$out"
+    return
   fi
   after="$(git -C "$repo" rev-parse HEAD)"
 
   if [[ "$before" == "$after" ]]; then
+    echo current
     printf '%s=%s %s %s(%s)%s\n' "$dim" "$reset" "$rel" "$dim" "$branch" "$reset"
-    current=$((current + 1))
   else
     local n
     n="$(git -C "$repo" rev-list --count "$before..$after")"
-    printf '%s+%s %s %s(%s, %s new commit(s))%s\n' "$green" "$reset" "$rel" "$dim" "$branch" "$n" "$reset"
-    updated=$((updated + 1))
+    echo updated
+    printf '%s+%s %s %s(%s, %s new commit%s)%s\n' \
+      "$green" "$reset" "$rel" "$dim" "$branch" "$n" "$([[ "$n" == 1 ]] || printf s)" "$reset"
   fi
 }
 
+dryrun_repo() {
+  local repo="$1" rel branch
+  rel="$(repo_label "$repo")"
+
+  if ! branch="$(git -C "$repo" symbolic-ref --quiet --short HEAD)"; then
+    echo skipped
+    printf '%s-%s %s %s(detached HEAD)%s\n' "$yellow" "$reset" "$rel" "$dim" "$reset"
+    return
+  fi
+  if ! git -C "$repo" rev-parse --quiet --verify '@{upstream}' >/dev/null 2>&1; then
+    echo skipped
+    printf '%s-%s %s %s(%s has no upstream)%s\n' "$yellow" "$reset" "$rel" "$dim" "$branch" "$reset"
+    return
+  fi
+
+  local out
+  if ! out="$(git -C "$repo" fetch --quiet 2>&1)"; then
+    printf 'failed\t%s\n' "$rel"
+    printf '%sx%s %s %s(%s)%s\n' "$red" "$reset" "$rel" "$dim" "$branch" "$reset"
+    indented "$out"
+    return
+  fi
+
+  local counts behind ahead
+  counts="$(git -C "$repo" rev-list --left-right --count '@{upstream}...HEAD')"
+  behind="${counts%%[[:space:]]*}"
+  ahead="${counts##*[[:space:]]}"
+
+  if [[ "$behind" != 0 && "$ahead" != 0 ]]; then
+    printf 'failed\t%s\n' "$rel"
+    printf '%sx%s %s %s(%s)%s\n' "$red" "$reset" "$rel" "$dim" "$branch" "$reset"
+    indented "diverged from upstream (behind $behind, ahead $ahead): cannot fast-forward"
+  elif [[ "$behind" != 0 ]]; then
+    echo updated
+    printf '%s+%s %s %s(%s, %s new commit%s)%s\n' \
+      "$green" "$reset" "$rel" "$dim" "$branch" "$behind" "$([[ "$behind" == 1 ]] || printf s)" "$reset"
+  else
+    echo current
+    printf '%s=%s %s %s(%s)%s\n' "$dim" "$reset" "$rel" "$dim" "$branch" "$reset"
+  fi
+}
+
+# Runs inside the worker pool: $1 = scratch dir, $2 = index, $3 = repo.
+# The result file appears atomically (write, then rename) so the collector
+# can print results in order as they land.
+worker() {
+  exec </dev/null
+  "${mode}_repo" "$3" >"$1/$2.tmp" 2>&1 || true
+  mv "$1/$2.tmp" "$1/$2.done"
+}
+
+# --- discovery ---------------------------------------------------------------
+
+repos=()
 walk() {
   local dir="$1" depth="$2"
   if [[ -e "$dir/.git" ]]; then
-    pull_repo "$dir"
+    repos+=("$dir")
     return
   fi
   ((depth < max_depth)) || return 0
@@ -97,18 +177,70 @@ walk() {
     walk "${child%/}" $((depth + 1))
   done
 }
-
 walk "$root" 0
 
-total=$((updated + current + skipped + failed))
-if ((total == 0)); then
+count=${#repos[@]}
+if ((count == 0)); then
   echo "No git repositories found under $root (max depth $max_depth)"
   exit 0
 fi
 
+# --- collection --------------------------------------------------------------
+
+[[ "$mode" != dryrun ]] || printf '%sDry run: nothing will be pulled.%s\n' "$dim" "$reset"
+
+updated=0 current=0 skipped=0 failed=0
+failed_repos=()
+
+consume() {
+  local text="$1" head="${1%%$'\n'*}" body="${1#*$'\n'}"
+  local category="${head%%$'\t'*}" label="${head#*$'\t'}"
+  case "$category" in
+    updated) updated=$((updated + 1)) ;;
+    current) current=$((current + 1)) ;;
+    skipped) skipped=$((skipped + 1)) ;;
+    failed) failed=$((failed + 1)); failed_repos+=("$label") ;;
+    *) echo "pullr: unexpected worker result: $text" >&2; exit 1 ;;
+  esac
+  printf '%s\n' "$body"
+}
+
+if ((jobs > 1 && count > 1)); then
+  scratch="$(mktemp -d)"
+  trap 'rm -rf "$scratch"' EXIT
+  export GIT_TERMINAL_PROMPT=0
+  export mode root green yellow red dim reset
+  export -f worker pull_repo dryrun_repo repo_label indented
+  # shellcheck disable=SC2016  # the single-quoted body runs inside the child shell
+  for ((i = 0; i < count; i++)); do printf '%s\0%s\0' "$i" "${repos[i]}"; done |
+    xargs -0 -n 2 -P "$jobs" "$BASH" -c 'worker "$@"' _ "$scratch" &
+  pool=$!
+  trap 'kill "$pool" 2>/dev/null; rm -rf "$scratch"; exit 130' INT TERM
+  for ((i = 0; i < count; i++)); do
+    until [[ -e "$scratch/$i.done" ]]; do
+      if ! kill -0 "$pool" 2>/dev/null && [[ ! -e "$scratch/$i.done" ]]; then
+        echo "pullr: worker pool exited before finishing $(repo_label "${repos[i]}")" >&2
+        exit 1
+      fi
+      sleep 0.1
+    done
+    consume "$(cat "$scratch/$i.done")"
+  done
+  wait "$pool" || true
+else
+  for repo in "${repos[@]}"; do
+    consume "$("${mode}_repo" "$repo")"
+  done
+fi
+
 echo
-printf 'Repos: %d  %supdated: %d%s  up to date: %d  %sskipped: %d%s  %sfailed: %d%s\n' \
-  "$total" "$green" "$updated" "$reset" "$current" "$yellow" "$skipped" "$reset" "$red" "$failed" "$reset"
+if [[ "$mode" == dryrun ]]; then
+  printf 'Repos: %d  %swould update: %d%s  up to date: %d  %sskipped: %d%s  %swould fail: %d%s\n' \
+    "$count" "$green" "$updated" "$reset" "$current" "$yellow" "$skipped" "$reset" "$red" "$failed" "$reset"
+else
+  printf 'Repos: %d  %supdated: %d%s  up to date: %d  %sskipped: %d%s  %sfailed: %d%s\n' \
+    "$count" "$green" "$updated" "$reset" "$current" "$yellow" "$skipped" "$reset" "$red" "$failed" "$reset"
+fi
 if ((failed)); then
   printf 'Failed: %s\n' "${failed_repos[*]}"
   exit 1

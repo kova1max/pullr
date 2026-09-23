@@ -43,13 +43,15 @@ there needs a GitHub token, so the npm registry above is the easier choice.
 ## Usage
 
 ```
-pullr [--max-depth N] [DIR]
+pullr [options] [DIR]
 ```
 
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `DIR` | current directory | Where to look for repositories |
+| `-j`, `--jobs N` | `4` | Work on up to `N` repositories in parallel. Output is buffered per repository and printed in discovery order, so it reads the same as a sequential run. With `N > 1` git never prompts for credentials; use `--jobs 1` for repositories that need an interactive login. |
 | `--max-depth N` | `2` | How many directory levels below `DIR` to search. `0` = only `DIR` itself, `1` = `DIR` and its direct children, ... |
+| `-n`, `--dry-run` | | Show what a run would do without pulling, see below |
 | `-V`, `--version` | | Print the version |
 | `-h`, `--help` | | Show help |
 
@@ -65,6 +67,28 @@ Behaviour:
 
 Each repository gets one line: `+` updated, `=` already up to date, `-`
 skipped, `x` failed (with git's output indented below it).
+
+### Dry run
+
+`pullr --dry-run` shows what a run would do, without pulling:
+
+```console
+$ pullr --dry-run ~/work
+Dry run: nothing will be pulled.
++ api (main, 3 new commits)
+= web (main)
+x infra (main)
+    diverged from upstream (behind 2, ahead 1): cannot fast-forward
+- scratch (main has no upstream)
+
+Repos: 4  would update: 1  up to date: 1  skipped: 1  would fail: 1
+Failed: infra
+```
+
+It runs `git fetch` in each repository first, so the answer reflects the
+remote as it is now, then prints the same lines a real run would. Fetching
+only updates remote-tracking refs: the working tree and current branch are
+never modified. Exit codes match a real run.
 
 ## Development
 

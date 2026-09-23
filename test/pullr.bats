@@ -35,7 +35,7 @@ advance_origin() {
   advance_origin
   run pullr ws
   [ "$status" -eq 0 ]
-  [[ "$output" == *"+ behind (main, 2 new commit(s))"* ]]
+  [[ "$output" == *"+ behind (main, 2 new commits)"* ]]
   [ "$(git -C ws/behind rev-parse HEAD)" = "$(git -C origin.git rev-parse main)" ]
 }
 
@@ -69,7 +69,7 @@ advance_origin() {
   run pullr ws
   [ "$status" -eq 1 ]
   [[ "$output" == *"x diverged (main)"* ]]
-  [[ "$output" == *"+ other (main, 2 new commit(s))"* ]]
+  [[ "$output" == *"+ other (main, 2 new commits)"* ]]
   [[ "$output" == *"Failed: diverged"* ]]
   [ "$(git -C ws/diverged rev-parse HEAD)" = "$before" ]
 }
@@ -143,4 +143,90 @@ advance_origin() {
   run pullr --version
   [ "$status" -eq 0 ]
   [ "$output" = "pullr $expected" ]
+}
+
+@test "reports a single new commit without a plural s" {
+  clone one
+  git -C seed commit -q --allow-empty -m two
+  git -C seed push -q origin main
+  run pullr ws
+  [[ "$output" == *"+ one (main, 1 new commit)"* ]]
+}
+
+@test "--jobs keeps output in discovery order and totals identical" {
+  clone a-behind; clone b-current; clone c-diverged; clone d-behind
+  git -C ws/c-diverged commit -q --allow-empty -m local
+  advance_origin
+  git -C ws/b-current pull -q
+  run pullr --jobs 8 ws
+  [ "$status" -eq 1 ]
+  expected="+ a-behind (main, 2 new commits)
+= b-current (main)
+x c-diverged (main)"
+  [[ "$output" == "$expected"* ]]
+  [[ "$output" == *"+ d-behind (main, 2 new commits)"* ]]
+  [[ "$output" == *"Repos: 4  updated: 2  up to date: 1  skipped: 0  failed: 1"* ]]
+  [[ "$output" == *"Failed: c-diverged"* ]]
+}
+
+@test "--jobs 1 runs sequentially with the same result" {
+  clone a-behind; clone b-current
+  advance_origin
+  git -C ws/b-current pull -q
+  run pullr -j 1 ws
+  [ "$status" -eq 0 ]
+  [[ "$output" == "+ a-behind (main, 2 new commits)
+= b-current (main)
+"* ]]
+}
+
+@test "--jobs rejects non-positive and non-numeric values" {
+  run pullr --jobs 0 ws
+  [ "$status" -eq 2 ]
+  run pullr --jobs=x ws
+  [ "$status" -eq 2 ]
+  run pullr -j
+  [ "$status" -eq 2 ]
+}
+
+@test "--dry-run predicts each pull without changing anything, exits 1 if one would fail" {
+  clone behind; clone ahead; clone diverged; clone clean
+  git -C ws/diverged commit -q --allow-empty -m local
+  advance_origin
+  git -C ws/ahead pull -q
+  git -C ws/ahead commit -q --allow-empty -m local
+  git -C ws/clean pull -q
+  local before
+  before="$(git -C ws/behind rev-parse HEAD)"
+  run pullr --dry-run ws
+  [ "$status" -eq 1 ]
+  [[ "${lines[0]}" == "Dry run: nothing will be pulled." ]]
+  [[ "$output" == *"+ behind (main, 2 new commits)"* ]]
+  [[ "$output" == *"= ahead (main)"* ]]
+  [[ "$output" == *"x diverged (main)
+    diverged from upstream (behind 2, ahead 1): cannot fast-forward"* ]]
+  [[ "$output" == *"= clean (main)"* ]]
+  [[ "$output" == *"Repos: 4  would update: 1  up to date: 2  skipped: 0  would fail: 1"* ]]
+  [[ "$output" == *"Failed: diverged"* ]]
+  [ "$(git -C ws/behind rev-parse HEAD)" = "$before" ]
+}
+
+@test "--dry-run skips detached HEAD and no upstream like a real run" {
+  clone detached
+  git -C ws/detached checkout -q --detach
+  git init -q -b main ws/local
+  run pullr -n ws
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"- detached (detached HEAD)"* ]]
+  [[ "$output" == *"- local (main has no upstream)"* ]]
+  [[ "$output" == *"skipped: 2"* ]]
+}
+
+@test "--dry-run reports a fetch failure and exits 1" {
+  clone broken
+  git -C ws/broken remote set-url origin "$BATS_TEST_TMPDIR/missing.git"
+  run pullr --dry-run ws
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"x broken (main)"* ]]
+  [[ "$output" == *"Failed: broken"* ]]
 }
