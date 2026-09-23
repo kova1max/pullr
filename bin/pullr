@@ -84,96 +84,133 @@ indented() {
   printf '    %s\n' "${1//$'\n'/$'\n'    }"
 }
 
-pull_repo() {
-  local repo="$1" rel branch
-  rel="$(repo_label "$repo")"
-
+# Shared first half of a pull and a dry run: check the branch, fetch, and
+# count commits. On success it sets the caller's branch, behind and ahead;
+# otherwise it prints the result line and returns 1.
+prepare() {
+  local repo="$1" rel="$2" out counts
   if ! branch="$(git -C "$repo" symbolic-ref --quiet --short HEAD)"; then
     echo skipped
     printf '%s-%s %s %s(detached HEAD)%s\n' "$yellow" "$reset" "$rel" "$dim" "$reset"
-    return
+    return 1
   fi
   if ! git -C "$repo" rev-parse --quiet --verify '@{upstream}' >/dev/null 2>&1; then
     echo skipped
     printf '%s-%s %s %s(%s has no upstream)%s\n' "$yellow" "$reset" "$rel" "$dim" "$branch" "$reset"
-    return
+    return 1
   fi
-
-  local before after out how=--ff-only
-  [[ "$rebase" == 0 ]] || how=--rebase
-  before="$(git -C "$repo" rev-parse HEAD)"
-  if ! out="$(git -C "$repo" pull "$how" 2>&1)"; then
-    # a conflicting rebase must not leave the repository mid-rebase
-    [[ "$rebase" == 0 ]] || git -C "$repo" rebase --abort >/dev/null 2>&1 || true
-    printf 'failed\t%s\n' "$rel"
-    printf '%sx%s %s %s(%s)%s\n' "$red" "$reset" "$rel" "$dim" "$branch" "$reset"
-    indented "$out"
-    return
-  fi
-  after="$(git -C "$repo" rev-parse HEAD)"
-
-  if [[ "$before" == "$after" ]]; then
-    echo current
-    printf '%s=%s %s %s(%s)%s\n' "$dim" "$reset" "$rel" "$dim" "$branch" "$reset"
-    return
-  fi
-  # New upstream commits, and (after a rebase) local commits now on top of them.
-  local n local_n=0
-  n="$(git -C "$repo" rev-list --count "$before..@{upstream}")"
-  [[ "$rebase" == 0 ]] || local_n="$(git -C "$repo" rev-list --count '@{upstream}..HEAD')"
-  echo updated
-  printf '%s+%s %s %s(%s, %s)%s\n' "$green" "$reset" "$rel" "$dim" "$branch" \
-    "$(update_note "$n" "$local_n" rebased)" "$reset"
-}
-
-# "N new commits[, M rebased|to rebase]", singular when N is 1
-update_note() {
-  local n="$1" local_n="$2" verb="$3" note
-  note="$n new commit$([[ "$n" == 1 ]] || printf s)"
-  [[ "$local_n" == 0 ]] || note+=", $local_n $verb"
-  printf '%s' "$note"
-}
-
-dryrun_repo() {
-  local repo="$1" rel branch
-  rel="$(repo_label "$repo")"
-
-  if ! branch="$(git -C "$repo" symbolic-ref --quiet --short HEAD)"; then
-    echo skipped
-    printf '%s-%s %s %s(detached HEAD)%s\n' "$yellow" "$reset" "$rel" "$dim" "$reset"
-    return
-  fi
-  if ! git -C "$repo" rev-parse --quiet --verify '@{upstream}' >/dev/null 2>&1; then
-    echo skipped
-    printf '%s-%s %s %s(%s has no upstream)%s\n' "$yellow" "$reset" "$rel" "$dim" "$branch" "$reset"
-    return
-  fi
-
-  local out
   if ! out="$(git -C "$repo" fetch --quiet 2>&1)"; then
-    printf 'failed\t%s\n' "$rel"
-    printf '%sx%s %s %s(%s)%s\n' "$red" "$reset" "$rel" "$dim" "$branch" "$reset"
-    indented "$out"
-    return
+    report_failed "$rel" "$branch" "$out"
+    return 1
   fi
-
-  local counts behind ahead
   counts="$(git -C "$repo" rev-list --left-right --count '@{upstream}...HEAD')"
   behind="${counts%%[[:space:]]*}"
   ahead="${counts##*[[:space:]]}"
+}
 
-  if [[ "$behind" != 0 && "$ahead" != 0 && "$rebase" == 0 ]]; then
-    printf 'failed\t%s\n' "$rel"
-    printf '%sx%s %s %s(%s)%s\n' "$red" "$reset" "$rel" "$dim" "$branch" "$reset"
-    indented "diverged from upstream (behind $behind, ahead $ahead): cannot fast-forward"
-  elif [[ "$behind" != 0 ]]; then
-    # without --rebase this branch is only reached when ahead is 0
-    echo updated
-    printf '%s+%s %s %s(%s, %s)%s\n' "$green" "$reset" "$rel" "$dim" "$branch" \
-      "$(update_note "$behind" "$ahead" "to rebase")" "$reset"
+report_failed() {
+  printf 'failed\t%s\n' "$1"
+  printf '%sx%s %s %s(%s)%s\n' "$red" "$reset" "$1" "$dim" "$2" "$reset"
+  indented "$3"
+}
+
+report_diverged() {
+  report_failed "$1" "$2" "diverged from upstream (behind $3, ahead $4): cannot fast-forward"
+}
+
+report_dirty() {
+  printf 'dirty\t%s\n' "$1"
+  printf '%s~%s %s %s(%s, %s held back by local changes)%s\n' \
+    "$yellow" "$reset" "$1" "$dim" "$2" "$(commits "$3")" "$reset"
+}
+
+report_current() {
+  echo current
+  printf '%s=%s %s %s(%s)%s\n' "$dim" "$reset" "$1" "$dim" "$2" "$reset"
+}
+
+report_updated() {
+  local note
+  note="$3 new commit$([[ "$3" == 1 ]] || printf s)"
+  [[ "$4" == 0 ]] || note+=", $4 $5"
+  echo updated
+  printf '%s+%s %s %s(%s, %s)%s\n' "$green" "$reset" "$1" "$dim" "$2" "$note" "$reset"
+}
+
+# "1 commit", "3 commits"
+commits() {
+  printf '%s commit%s' "$1" "$([[ "$1" == 1 ]] || printf s)"
+}
+
+# Uncommitted changes to tracked files, staged or not.
+has_tracked_changes() {
+  ! git -C "$1" diff --quiet HEAD --
+}
+
+pull_repo() {
+  local repo="$1" rel branch behind ahead out
+  rel="$(repo_label "$repo")"
+  prepare "$repo" "$rel" || return 0
+
+  if [[ "$behind" == 0 ]]; then
+    report_current "$rel" "$branch"
+  elif [[ "$ahead" == 0 ]]; then
+    # git refuses, touching nothing, when local changes are in the way
+    if out="$(git -C "$repo" merge --ff-only --quiet '@{upstream}' 2>&1)"; then
+      report_updated "$rel" "$branch" "$behind" 0 ""
+    elif [[ -n "$(git -C "$repo" status --porcelain)" ]]; then
+      report_dirty "$rel" "$branch" "$behind"
+    else
+      report_failed "$rel" "$branch" "$out"
+    fi
+  elif [[ "$rebase" == 0 ]]; then
+    report_diverged "$rel" "$branch" "$behind" "$ahead"
+  elif has_tracked_changes "$repo"; then
+    report_dirty "$rel" "$branch" "$behind"
+  elif out="$(git -C "$repo" rebase --quiet '@{upstream}' 2>&1)"; then
+    report_updated "$rel" "$branch" "$behind" "$ahead" rebased
   else
-    echo current
-    printf '%s=%s %s %s(%s)%s\n' "$dim" "$reset" "$rel" "$dim" "$branch" "$reset"
+    # A rebase that stopped on a conflict must not leave the repository
+    # mid-rebase; --abort succeeds only when one is in progress.
+    if git -C "$repo" rebase --abort >/dev/null 2>&1; then
+      report_failed "$rel" "$branch" "$out"
+    elif [[ -n "$(git -C "$repo" status --porcelain)" ]]; then
+      report_dirty "$rel" "$branch" "$behind"
+    else
+      report_failed "$rel" "$branch" "$out"
+    fi
+  fi
+}
+
+# Would local changes stop a fast-forward? Git refuses when a file it has to
+# update is modified locally or exists untracked, so compare the two lists.
+changes_block_update() {
+  local repo="$1" incoming local_paths
+  incoming="$(git -C "$repo" diff --name-only HEAD '@{upstream}')"
+  local_paths="$(git -C "$repo" status --porcelain --untracked-files=all | cut -c4-)"
+  [[ -n "$incoming" && -n "$local_paths" ]] || return 1
+  printf '%s\n' "$local_paths" | grep -qFxf <(printf '%s\n' "$incoming")
+}
+
+dryrun_repo() {
+  local repo="$1" rel branch behind ahead
+  rel="$(repo_label "$repo")"
+  prepare "$repo" "$rel" || return 0
+
+  if [[ "$behind" == 0 ]]; then
+    report_current "$rel" "$branch"
+  elif [[ "$ahead" == 0 ]]; then
+    if changes_block_update "$repo"; then
+      report_dirty "$rel" "$branch" "$behind"
+    else
+      report_updated "$rel" "$branch" "$behind" 0 ""
+    fi
+  elif [[ "$rebase" == 0 ]]; then
+    report_diverged "$rel" "$branch" "$behind" "$ahead"
+  elif has_tracked_changes "$repo"; then
+    report_dirty "$rel" "$branch" "$behind"
+  else
+    report_updated "$rel" "$branch" "$behind" "$ahead" "to rebase"
   fi
 }
 
@@ -214,8 +251,8 @@ fi
 
 [[ "$mode" != dryrun ]] || printf '%sDry run: nothing will be pulled.%s\n' "$dim" "$reset"
 
-updated=0 current=0 skipped=0 failed=0
-failed_repos=()
+updated=0 current=0 skipped=0 failed=0 dirty=0
+failed_repos=() dirty_repos=()
 
 consume() {
   local text="$1" head="${1%%$'\n'*}" body="${1#*$'\n'}"
@@ -224,6 +261,7 @@ consume() {
     updated) updated=$((updated + 1)) ;;
     current) current=$((current + 1)) ;;
     skipped) skipped=$((skipped + 1)) ;;
+    dirty) dirty=$((dirty + 1)); dirty_repos+=("$label") ;;
     failed) failed=$((failed + 1)); failed_repos+=("$label") ;;
     *) echo "pullr: unexpected worker result: $text" >&2; exit 1 ;;
   esac
@@ -235,7 +273,7 @@ if ((jobs > 1 && count > 1)); then
   trap 'rm -rf "$scratch"' EXIT
   export GIT_TERMINAL_PROMPT=0
   export mode rebase root green yellow red dim reset
-  export -f worker pull_repo dryrun_repo repo_label indented update_note
+  export -f worker pull_repo dryrun_repo repo_label indented prepare report_failed report_diverged report_dirty report_current report_updated commits has_tracked_changes changes_block_update
   # shellcheck disable=SC2016  # the single-quoted body runs inside the child shell
   for ((i = 0; i < count; i++)); do printf '%s\0%s\0' "$i" "${repos[i]}"; done |
     xargs -0 -n 2 -P "$jobs" "$BASH" -c 'worker "$@"' _ "$scratch" &
@@ -260,12 +298,13 @@ fi
 
 echo
 if [[ "$mode" == dryrun ]]; then
-  printf 'Repos: %d  %swould update: %d%s  up to date: %d  %sskipped: %d%s  %swould fail: %d%s\n' \
-    "$count" "$green" "$updated" "$reset" "$current" "$yellow" "$skipped" "$reset" "$red" "$failed" "$reset"
+  printf 'Repos: %d  %swould update: %d%s  up to date: %d  %sdirty: %d  skipped: %d%s  %swould fail: %d%s\n' \
+    "$count" "$green" "$updated" "$reset" "$current" "$yellow" "$dirty" "$skipped" "$reset" "$red" "$failed" "$reset"
 else
-  printf 'Repos: %d  %supdated: %d%s  up to date: %d  %sskipped: %d%s  %sfailed: %d%s\n' \
-    "$count" "$green" "$updated" "$reset" "$current" "$yellow" "$skipped" "$reset" "$red" "$failed" "$reset"
+  printf 'Repos: %d  %supdated: %d%s  up to date: %d  %sdirty: %d  skipped: %d%s  %sfailed: %d%s\n' \
+    "$count" "$green" "$updated" "$reset" "$current" "$yellow" "$dirty" "$skipped" "$reset" "$red" "$failed" "$reset"
 fi
+((dirty == 0)) || printf 'Dirty: %s\n' "${dirty_repos[*]}"
 if ((failed)); then
   printf 'Failed: %s\n' "${failed_repos[*]}"
   exit 1
