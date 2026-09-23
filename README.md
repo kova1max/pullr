@@ -46,6 +46,24 @@ Every release is also mirrored to
 `@kova1max/pullr` (GitHub requires the repo owner as scope). Installing from
 there needs a GitHub token, so the npm registry above is the easier choice.
 
+## What it will never do
+
+pullr is built to be safe to run across a whole workspace without looking
+first. It will never:
+
+- **Create a merge commit.** Pulls are fast-forward only.
+- **Touch a branch that has diverged** from its upstream. It is reported as
+  failed and left exactly as it was. Rebasing it is opt-in with `--rebase`,
+  and a rebase that hits a conflict is aborted, leaving the repository as it
+  was.
+- **Stash or discard your changes.** There is no auto-stash; if git refuses
+  to update a dirty working tree, the repository is reported as failed.
+- **Touch a repository on a detached `HEAD`**, or a branch with no upstream.
+  Both are skipped.
+- **Enter a nested repository.** Repositories inside another repository,
+  including submodules, are left to their parent.
+- **Follow symlinked directories.**
+
 ## Usage
 
 ```
@@ -62,22 +80,11 @@ pullr [options] [DIR]
 | `-V`, `--version` | | Print the version |
 | `-h`, `--help` | | Show help |
 
-Behaviour:
-
-- Runs `git pull --ff-only`, so it never creates merge commits. A branch that
-  has diverged from its upstream is reported as failed and left untouched.
-  With `--rebase`, that branch's local commits are rebased onto the upstream
-  instead, and the line reads `+ api (main, 3 new commits, 2 rebased)`. There
-  is no auto-stash: a dirty tree makes git refuse the rebase, which is
-  reported as failed.
-- Does not descend into a repository once found - nested repositories and
-  submodules are left to their parent.
-- Skips repositories on a detached `HEAD` and branches with no upstream.
-- Does not follow symlinked directories.
-- Exits `1` if any pull failed, `2` on invalid arguments, `0` otherwise.
+### Output
 
 Each repository gets one line: `+` updated, `=` already up to date, `-`
-skipped, `x` failed (with git's output indented below it).
+skipped, `x` failed (with git's output indented below it). Exits `1` if any
+pull failed, `2` on invalid arguments, `0` otherwise.
 
 ### Dry run
 
