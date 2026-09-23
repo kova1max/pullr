@@ -71,9 +71,9 @@ first. It will never:
 pullr [options] [DIR]
 ```
 
-| Option | Default | Meaning |
-| --- | --- | --- |
-| `DIR` | current directory | Where to look for repositories |
+| Option&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; | Default | Meaning |
+| :--- | :--- | :--- |
+| `DIR` | current&nbsp;directory | Where to look for repositories |
 | `-j`, `--jobs N` | `4` | Work on up to `N` repositories in parallel. Output is buffered per repository and printed in discovery order, so it reads the same as a sequential run. With `N > 1` git never prompts for credentials; use `--jobs 1` for repositories that need an interactive login. |
 | `--max-depth N` | `2` | How many directory levels below `DIR` to search. `0` = only `DIR` itself, `1` = `DIR` and its direct children, ... |
 | `-n`, `--dry-run` | | Show what a run would do without pulling, see below |
