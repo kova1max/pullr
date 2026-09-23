@@ -78,13 +78,9 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-      # Trusted publishing (OIDC) needs no token, but npm only allows it for a
-      # package that already exists. NPM_TOKEN exists solely for the very first
-      # publish: once the package is on npm and `npm trust github` is set up,
-      # delete the secret and OIDC is used. npm prefers OIDC when both work.
+      # Trusted publishing: npm accepts this job's OIDC token because the
+      # package trusts kova1max/pullr + release.yml (set up with `npm trust`).
       - run: npm publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Verify the published package runs
         env:
           VERSION: ${{ needs.release.outputs.version }}

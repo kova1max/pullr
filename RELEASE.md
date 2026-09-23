@@ -13,9 +13,7 @@ It runs as `github-actions[bot]` and:
    the tests, then commits `release vX.Y.Z` and tags it on `main`;
 2. creates the GitHub release with notes generated from the changes since
    the previous tag;
-3. publishes to npm via trusted publishing (OIDC, no token), with provenance
-   (the very first publish uses a temporary `NPM_TOKEN` secret, since npm only
-   allows trusted publishing for a package that already exists);
+3. publishes to npm via trusted publishing (OIDC, no token), with provenance;
 4. points the formula in
    [kova1max/homebrew-tap](https://github.com/kova1max/homebrew-tap) at the
    new tag, using the `TAP_DEPLOY_KEY` secret (a write deploy key on the tap);
