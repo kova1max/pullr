@@ -14,7 +14,10 @@ It runs as `github-actions[bot]` and:
 2. creates the GitHub release with notes generated from the changes since
    the previous tag;
 3. publishes to npm via trusted publishing (OIDC, no token), with provenance;
-4. points the formula in
+4. mirrors the same tarball to GitHub Packages as `@kova1max/pullr` (GitHub
+   only accepts packages scoped to the repo owner), using the workflow's own
+   `GITHUB_TOKEN`;
+5. points the formula in
    [kova1max/homebrew-tap](https://github.com/kova1max/homebrew-tap) at the
    new tag, using the `TAP_DEPLOY_KEY` secret (a write deploy key on the tap);
-5. installs from npm and from the tap to verify both.
+6. installs from npm and from the tap to verify both.

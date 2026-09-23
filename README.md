@@ -1,5 +1,10 @@
 # pullr
 
+[![CI](https://github.com/kova1max/pullr/actions/workflows/ci.yml/badge.svg)](https://github.com/kova1max/pullr/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/%40kova1%2Fpullr?logo=npm&label=npm)](https://www.npmjs.com/package/@kova1/pullr)
+[![Homebrew](https://img.shields.io/github/v/release/kova1max/pullr?logo=homebrew&label=homebrew)](https://github.com/kova1max/homebrew-tap)
+[![License: MIT](https://img.shields.io/github/license/kova1max/pullr)](LICENSE)
+
 Fast-forward pull every git repository under a directory.
 
 Built for workspaces made of many independent repositories, where keeping
@@ -29,6 +34,11 @@ npm install -g @kova1/pullr
 
 Or copy [`bin/pullr`](bin/pullr) anywhere on your `PATH` - it is a single bash
 script with no dependencies beyond `git`.
+
+Every release is also mirrored to
+[GitHub Packages](https://github.com/kova1max/pullr/pkgs/npm/pullr) as
+`@kova1max/pullr` (GitHub requires the repo owner as scope). Installing from
+there needs a GitHub token, so the npm registry above is the easier choice.
 
 ## Usage
 
