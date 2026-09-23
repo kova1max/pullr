@@ -1,13 +1,20 @@
 name: Release
 
-# release-please keeps a release PR open from conventional commits on main.
-# Merging it tags vX.Y.Z and creates the GitHub release; the jobs below then
-# publish that tag to npm and the Homebrew tap. They live in this workflow
-# because tags and releases created with GITHUB_TOKEN trigger no other workflow.
+# Run by hand: Actions tab -> Release -> Run workflow, or
+#   gh workflow run release.yml -f bump=minor
+# It bumps the version, commits and tags it on main as github-actions[bot],
+# creates the GitHub release, then publishes to npm and the Homebrew tap and
+# installs from both to verify. Everything runs in this one workflow because
+# pushes and tags made with GITHUB_TOKEN trigger no other workflow.
 
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Which part of the version to bump
+        type: choice
+        options: [patch, minor, major]
+        default: patch
 
 permissions: {}
 
@@ -16,22 +23,49 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release-please:
+  release:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      pull-requests: write
     outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
-      tag_name: ${{ steps.release.outputs.tag_name }}
-      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.bump.outputs.tag }}
+      version: ${{ steps.bump.outputs.version }}
     steps:
-      - id: release
-        uses: googleapis/release-please-action@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: npm ci
+      - id: bump
+        name: Bump the version in package.json and bin/pullr
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          version="$(npm version "$BUMP" --no-git-tag-version)"
+          version="${version#v}"
+          sed -i -E "s/^VERSION=\"[^\"]*\"/VERSION=\"$version\"/" bin/pullr
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "tag=v$version" >>"$GITHUB_OUTPUT"
+      - run: shellcheck bin/pullr
+      - run: npm test
+      - name: Commit, tag and push
+        env:
+          TAG: ${{ steps.bump.outputs.tag }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "release $TAG"
+          git tag -a "$TAG" -m "$TAG"
+          git push --atomic origin HEAD:main "$TAG"
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.bump.outputs.tag }}
+        run: gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
 
   npm:
-    needs: release-please
-    if: needs.release-please.outputs.release_created == 'true'
+    needs: release
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -39,7 +73,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
+          ref: ${{ needs.release.outputs.tag }}
       - uses: actions/setup-node@v7
         with:
           node-version: 24
@@ -53,7 +87,7 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - name: Verify the published package runs
         env:
-          VERSION: ${{ needs.release-please.outputs.version }}
+          VERSION: ${{ needs.release.outputs.version }}
         run: |
           for _ in 1 2 3 4 5 6; do
             out="$(npx -y "@kova1max/pullr@$VERSION" --version 2>/dev/null)" && break
@@ -62,8 +96,7 @@ jobs:
           test "$out" = "pullr $VERSION"
 
   homebrew:
-    needs: release-please
-    if: needs.release-please.outputs.release_created == 'true'
+    needs: release
     runs-on: ubuntu-latest
     permissions: {}
     steps:
@@ -73,7 +106,7 @@ jobs:
           ssh-key: ${{ secrets.TAP_DEPLOY_KEY }}
       - name: Point the formula at the new tag
         env:
-          TAG: ${{ needs.release-please.outputs.tag_name }}
+          TAG: ${{ needs.release.outputs.tag }}
         run: |
           url="https://github.com/kova1max/pullr/archive/refs/tags/$TAG.tar.gz"
           sha="$(curl -fsSL "$url" | sha256sum | cut -d' ' -f1)"
@@ -88,13 +121,13 @@ jobs:
           git push
 
   verify-homebrew:
-    needs: [release-please, homebrew]
+    needs: [release, homebrew]
     runs-on: macos-latest
     permissions: {}
     steps:
       - name: Install from the tap and run the formula test
         env:
-          VERSION: ${{ needs.release-please.outputs.version }}
+          VERSION: ${{ needs.release.outputs.version }}
         run: |
           brew install kova1max/tap/pullr
           brew test kova1max/tap/pullr

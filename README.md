@@ -21,7 +21,7 @@ Failed: infra
 
 ```sh
 # Homebrew
-brew install kova1max/tap/pullr
+brew install kova1max/tap/pullr   # after that, plain `pullr` works too
 
 # npm
 npm install -g @kova1max/pullr
@@ -67,22 +67,26 @@ PULLR_BASH=/bin/bash npm test   # run the suite under macOS's bash 3.2
 
 ## Releasing
 
-Releases are automated with
-[release-please](https://github.com/googleapis/release-please) and driven by
-[Conventional Commits](https://www.conventionalcommits.org/):
+Releases are cut by GitHub Actions, never from a laptop. Run the Release
+workflow from the Actions tab, or:
 
-1. Merge commits such as `feat: ...` or `fix: ...` into `main`.
-2. release-please keeps a release PR open that bumps the version and updates
-   `CHANGELOG.md`.
-3. Merging that PR tags `vX.Y.Z` and creates the GitHub release, then the
-   release workflow:
-   - publishes to npm via trusted publishing (OIDC, no token), with provenance
-     (the very first publish uses a temporary `NPM_TOKEN` secret, since npm
-     only allows trusted publishing for a package that already exists);
-   - points the formula in
-     [kova1max/homebrew-tap](https://github.com/kova1max/homebrew-tap) at the
-     new tag, using the `TAP_DEPLOY_KEY` secret (a write deploy key on the tap);
-   - installs from npm and from the tap to verify both.
+```sh
+gh workflow run release.yml -f bump=patch   # or minor / major
+```
+
+It runs as `github-actions[bot]` and:
+
+1. bumps the version in `package.json` and `bin/pullr`, runs shellcheck and
+   the tests, then commits `release vX.Y.Z` and tags it on `main`;
+2. creates the GitHub release with notes generated from the changes since
+   the previous tag;
+3. publishes to npm via trusted publishing (OIDC, no token), with provenance
+   (the very first publish uses a temporary `NPM_TOKEN` secret, since npm only
+   allows trusted publishing for a package that already exists);
+4. points the formula in
+   [kova1max/homebrew-tap](https://github.com/kova1max/homebrew-tap) at the
+   new tag, using the `TAP_DEPLOY_KEY` secret (a write deploy key on the tap);
+5. installs from npm and from the tap to verify both.
 
 ## License
 
