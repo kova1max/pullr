@@ -36,6 +36,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
+          package-manager-cache: false # never cache in release builds
       - run: npm ci
       - id: bump
         name: Bump the version in package.json and bin/pullr
@@ -77,6 +78,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
+          package-manager-cache: false # never cache in release builds
           registry-url: https://registry.npmjs.org
       # Trusted publishing: npm accepts this job's OIDC token because the
       # package trusts kova1max/pullr + release.yml (set up with `npm trust`).
@@ -104,6 +106,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
+          package-manager-cache: false # never cache in release builds
           registry-url: https://npm.pkg.github.com
           scope: "@kova1max"
       # GitHub Packages only accepts packages scoped to the repo owner, so the
