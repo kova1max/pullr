@@ -1,8 +1,14 @@
 {
   "name": "@kova1max/pullr",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Fast-forward pull every git repository under a directory",
-  "keywords": ["git", "pull", "cli", "monorepo", "workspace"],
+  "keywords": [
+    "git",
+    "pull",
+    "cli",
+    "monorepo",
+    "workspace"
+  ],
   "homepage": "https://github.com/kova1max/pullr#readme",
   "bugs": "https://github.com/kova1max/pullr/issues",
   "repository": {
@@ -17,7 +23,10 @@
   "files": [
     "bin/pullr"
   ],
-  "os": ["darwin", "linux"],
+  "os": [
+    "darwin",
+    "linux"
+  ],
   "scripts": {
     "lint": "shellcheck bin/pullr",
     "test": "bats test"
