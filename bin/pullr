@@ -13,7 +13,7 @@ Finds git repositories under DIR (default: current directory) and runs
 `git pull --ff-only` in each. Does not descend into a repository once found.
 
 Options:
-  -j, --jobs N       Work on up to N repositories in parallel (default: 4).
+  -j, --jobs N       Work on up to N repositories in parallel (default: 8).
                      Output is buffered per repository and printed in order.
                      With N > 1 git never prompts for credentials.
       --max-depth N  How many directory levels below DIR to search (default: 2).
@@ -32,7 +32,7 @@ EOF
 }
 
 mode=pull
-jobs=4
+jobs=8
 rebase=0
 color=1
 max_depth=2
