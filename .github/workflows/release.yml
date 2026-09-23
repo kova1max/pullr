@@ -86,7 +86,7 @@ jobs:
           VERSION: ${{ needs.release.outputs.version }}
         run: |
           for _ in 1 2 3 4 5 6; do
-            out="$(npx -y "@kova1max/pullr@$VERSION" --version 2>/dev/null)" && break
+            out="$(npx -y "@kova1/pullr@$VERSION" --version 2>/dev/null)" && break
             sleep 10
           done
           test "$out" = "pullr $VERSION"

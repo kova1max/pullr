@@ -24,7 +24,7 @@ Failed: infra
 brew install kova1max/tap/pullr   # after that, plain `pullr` works too
 
 # npm
-npm install -g @kova1max/pullr
+npm install -g @kova1/pullr
 ```
 
 Or copy [`bin/pullr`](bin/pullr) anywhere on your `PATH` - it is a single bash
