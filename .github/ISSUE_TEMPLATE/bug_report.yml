@@ -1,0 +1,42 @@
+name: Bug report
+description: pullr did something wrong or unexpected
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The command you ran and its full output.
+      render: console
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: The state of the repository involved - branch, upstream, local changes - or commands that set it up.
+  - type: input
+    id: version
+    attributes:
+      label: pullr version
+      description: Output of `pullr --version`
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: OS, bash and git versions
+      description: e.g. macOS 26, bash 3.2.57, git 2.51.0
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installed via
+      options: [Homebrew, npm, Copied bin/pullr, Other]
