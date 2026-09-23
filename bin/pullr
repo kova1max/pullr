@@ -3,7 +3,7 @@
 # Usage: pullr [--max-depth N] [DIR]
 set -euo pipefail
 
-VERSION="0.0.0" # set by the release workflow
+VERSION="0.1.0" # set by the release workflow
 
 usage() {
   cat <<'EOF'
