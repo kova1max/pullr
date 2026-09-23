@@ -1,7 +1,7 @@
 name: Release
 
 # Run by hand: Actions tab -> Release -> Run workflow, or
-#   gh workflow run release.yml -f bump=minor
+#   gh workflow run release.yml -f bump=minor -f notes="Highlights ..."
 # It bumps the version, commits and tags it on main as github-actions[bot],
 # creates the GitHub release, then publishes to npm and the Homebrew tap and
 # installs from both to verify. Everything runs in this one workflow because
@@ -15,6 +15,10 @@ on:
         type: choice
         options: [patch, minor, major]
         default: patch
+      notes:
+        description: Summary shown above the generated list of pull requests (Markdown, optional)
+        type: string
+        required: false
 
 permissions: {}
 
@@ -63,7 +67,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.bump.outputs.tag }}
-        run: gh release create "$TAG" --verify-tag --title "$TAG" --generate-notes
+          NOTES: ${{ inputs.notes }}
+        # --notes goes above the generated notes; empty keeps just the generated part
+        run: gh release create "$TAG" --verify-tag --title "$TAG" --notes "$NOTES" --generate-notes
 
   npm:
     needs: release
