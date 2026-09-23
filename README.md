@@ -114,6 +114,27 @@ remote as it is now, then prints the same lines a real run would (with
 only updates remote-tracking refs: the working tree and current branch are
 never modified. Exit codes match a real run.
 
+## How it compares
+
+| | pullr | [gita](https://github.com/nosarthur/gita) | [gitup](https://github.com/earwig/git-repo-updater) | [myrepos](https://myrepos.branchable.com) (`mr`) | [mani](https://github.com/alajmo/mani) |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| Needs | bash and git | Python&nbsp;3.8+ | Python&nbsp;3.10+ | Perl | Go binary |
+| Finds repos | scans a directory | register first (`gita add`) | scans a directory | register first (`~/.mrconfig`) | register first (`mani.yaml`) |
+| Pulls in parallel | 4 at a time by default | all at once, no limit | no | opt-in | opt-in |
+| Update | fetch + fast&#8209;forward | `git pull` | fetch + fast&#8209;forward | `git pull` | no built-in pull |
+| Merge commits | never | depends on your git config | never | depends on your git config | depends on your command |
+| Local changes in the way | reported as dirty | git's error | skipped | git's error | - |
+| Dry run | yes | no | no | no | prints commands |
+
+**Why "4 at a time" and not "all at once".** Many self-hosted git servers
+limit how many SSH connections can be opening at the same time; OpenSSH's
+default (`MaxStartups 10:30:100`) starts refusing them past 10. Fetching
+every repository at once then fails for reasons that have nothing to do with
+your repositories. On a self-hosted GitLab with 61 repositories, 16 parallel
+fetches produced 6-9 of those spurious failures and 32 produced 10-14, while
+8 produced none. GitHub itself handled 64 at once without errors, so raise
+`-j` freely there.
+
 ## License
 
 [MIT](LICENSE)
