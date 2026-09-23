@@ -1,6 +1,6 @@
 {
   "name": "@kova1/pullr",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Fast-forward pull every git repository under a directory",
   "keywords": [
     "git",
