@@ -103,17 +103,6 @@ remote as it is now, then prints the same lines a real run would (with
 only updates remote-tracking refs: the working tree and current branch are
 never modified. Exit codes match a real run.
 
-## Development
-
-```sh
-npm install     # installs bats
-npm test        # end-to-end tests against real temporary git repos
-npm run lint    # shellcheck
-PULLR_BASH=/bin/bash npm test   # run the suite under macOS's bash 3.2
-```
-
-Releases are cut by GitHub Actions - see [RELEASE.md](RELEASE.md).
-
 ## License
 
 [MIT](LICENSE)
