@@ -29,7 +29,7 @@ Options:
                      made and they are re-applied; if re-applying conflicts,
                      the repository is put back exactly as it was.
       --autostash    The default; accepted for scripts that want to be explicit.
-      --submodules   Also fast-forward each submodule that is checked out on a
+  -s, --submodules   Also fast-forward each submodule that is checked out on a
                      branch, with the same rules as any other repository.
                      Submodules on a detached HEAD are skipped.
       --no-color     Disable colored output. Also disabled when NO_COLOR is
@@ -58,7 +58,7 @@ while (($#)); do
     -r|--rebase) rebase=1; shift ;;
     --autostash) autostash=1; shift ;;
     --no-autostash) autostash=0; shift ;;
-    --submodules) submodules=1; shift ;;
+    -s|--submodules) submodules=1; shift ;;
     --no-color) color=0; shift ;;
     -h|--help) usage; exit 0 ;;
     -V|--version) echo "pullr $VERSION"; exit 0 ;;
