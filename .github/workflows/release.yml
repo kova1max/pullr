@@ -6,6 +6,10 @@ name: Release
 # creates the GitHub release, then publishes to npm and the Homebrew tap and
 # installs from both to verify. Everything runs in this one workflow because
 # pushes and tags made with GITHUB_TOKEN trigger no other workflow.
+#
+# Each publishing job runs in a GitHub environment (npm, github-packages,
+# homebrew), so every release shows up under the repo's Deployments with a
+# link to what it published. The environments only accept the main branch.
 
 on:
   workflow_dispatch:
@@ -74,6 +78,11 @@ jobs:
   npm:
     needs: release
     runs-on: ubuntu-latest
+    # npm's trusted publisher must name this environment: the OIDC token
+    # carries it, and npm checks it.
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/@kova1/pullr/v/${{ needs.release.outputs.version }}
     permissions:
       contents: read
       id-token: write # npm trusted publishing (OIDC) and provenance
@@ -96,6 +105,9 @@ jobs:
   github-packages:
     needs: release
     runs-on: ubuntu-latest
+    environment:
+      name: github-packages
+      url: https://github.com/kova1max/pullr/pkgs/npm/pullr
     permissions:
       contents: read
       packages: write
@@ -125,6 +137,9 @@ jobs:
   homebrew:
     needs: release
     runs-on: ubuntu-latest
+    environment:
+      name: homebrew
+      url: https://github.com/kova1max/homebrew-tap/blob/main/Formula/pullr.rb
     permissions: {}
     steps:
       - uses: actions/checkout@v7
