@@ -328,11 +328,11 @@ make_blocked() {
   echo local >"ws/$1/file"
 }
 
-@test "local changes that block a fast-forward are reported as dirty, not failed" {
+@test "--no-autostash: local changes that block a fast-forward are reported as dirty, not failed" {
   make_blocked blocked
   local before
   before="$(git -C ws/blocked rev-parse HEAD)"
-  run pullr ws
+  run pullr --no-autostash ws
   [ "$status" -eq 0 ]
   [[ "$output" == "~ blocked (main, 1 commit held back by local changes)"* ]]
   [[ "$output" != *"error:"* && "$output" != *"overwritten"* ]]
@@ -351,31 +351,31 @@ make_blocked() {
   [ "$(cat ws/edited/notes.txt)" = "scratch" ]
 }
 
-@test "an untracked file in the way is reported as dirty" {
+@test "--no-autostash: an untracked file in the way is reported as dirty" {
   clone untracked
   echo upstream >seed/new && git -C seed add new && git -C seed commit -q -m new && git -C seed push -q origin main
   echo mine >ws/untracked/new
-  run pullr ws
+  run pullr --no-autostash ws
   [ "$status" -eq 0 ]
   [[ "$output" == *"~ untracked (main, 1 commit held back by local changes)"* ]]
   [ "$(cat ws/untracked/new)" = "mine" ]
 }
 
-@test "--dry-run predicts dirty and a clean update the same way a real run does" {
+@test "--no-autostash: --dry-run predicts dirty and a clean update the same way a real run does" {
   clone edited
   make_blocked blocked
   echo scratch >ws/edited/notes.txt
-  run pullr --dry-run ws
+  run pullr --no-autostash --dry-run ws
   [ "$status" -eq 0 ]
   [[ "$output" == *"~ blocked (main, 1 commit held back by local changes)"* ]]
   [[ "$output" == *"+ edited (main, 2 new commits)"* ]]
   [[ "$output" == *"dirty: 1"* ]]
-  run pullr ws
+  run pullr --no-autostash ws
   [[ "$output" == *"~ blocked (main, 1 commit held back by local changes)"* ]]
   [[ "$output" == *"+ edited (main, 2 new commits)"* ]]
 }
 
-@test "--rebase on a diverged branch with local edits reports dirty and rebases nothing" {
+@test "--no-autostash: --rebase on a diverged branch with local edits reports dirty and rebases nothing" {
   clone both
   echo base >seed/file && git -C seed add file && git -C seed commit -q -m base && git -C seed push -q origin main
   git -C ws/both pull -q
@@ -384,7 +384,7 @@ make_blocked() {
   echo local >ws/both/file
   local before
   before="$(git -C ws/both rev-parse HEAD)"
-  run pullr --rebase ws
+  run pullr --no-autostash --rebase ws
   [ "$status" -eq 0 ]
   [[ "$output" == *"~ both (main, 2 commits held back by local changes)"* ]]
   [ "$(git -C ws/both rev-parse HEAD)" = "$before" ]
@@ -452,13 +452,13 @@ bump_app_pointer() {
   [[ "$output" == *"  - app/lib (detached HEAD)"* ]]
 }
 
-@test "--submodules reports a dirty submodule by its full path" {
+@test "--no-autostash: --submodules reports a dirty submodule by its full path" {
   make_app_with_submodule
   echo base >libw/file && git -C libw add file && git -C libw commit -q -m base && git -C libw push -q origin main
   git -C ws/app/lib pull -q
   echo upstream >libw/file && git -C libw commit -q -am upstream && git -C libw push -q origin main
   echo local >ws/app/lib/file
-  run pullr --submodules ws
+  run pullr --no-autostash --submodules ws
   [ "$status" -eq 0 ]
   [[ "$output" == *"  ~ app/lib (main, 1 commit held back by local changes)"* ]]
   [[ "$output" == *"Dirty: app/lib"* ]]
@@ -486,4 +486,96 @@ bump_app_pointer() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"+ app (main, 1 new commit)"* ]]
   [ "$(git -C ws/app/lib rev-parse HEAD)" = "$(git -C lib.git rev-parse main)" ]
+}
+
+# Origin changes line 2 of `file`; the clone edits `file` too.
+make_edited() {
+  clone "$1"
+  printf 'a\nb\nc\n' >seed/file && git -C seed add file && git -C seed commit -q -m base && git -C seed push -q origin main
+  git -C "ws/$1" pull -q
+  printf 'a\nUPSTREAM\nc\n' >seed/file && git -C seed commit -q -am upstream && git -C seed push -q origin main
+}
+
+@test "autostash (default): local edits are stashed, the update is made and they are reapplied" {
+  make_edited repo
+  printf 'a\nb\nc\nmine\n' >ws/repo/file
+  run pullr ws
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"+ repo (main, 1 new commit, local changes reapplied)"* ]]
+  [ "$(git -C ws/repo rev-parse HEAD)" = "$(git -C origin.git rev-parse main)" ]
+  [ "$(cat ws/repo/file)" = "$(printf 'a\nUPSTREAM\nc\nmine')" ]
+  [ -z "$(git -C ws/repo stash list)" ]
+}
+
+@test "autostash: a conflict puts the repository back exactly as it was" {
+  make_edited repo
+  printf 'a\nMINE\nc\n' >ws/repo/file
+  echo scratch >ws/repo/untracked.txt
+  local before_head before_status
+  before_head="$(git -C ws/repo rev-parse HEAD)"
+  before_status="$(git -C ws/repo status --porcelain)"
+  run pullr ws
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"~ repo (main, 1 commit held back because local changes conflict with them)"* ]]
+  [[ "$output" == *"Dirty: repo"* ]]
+  [ "$(git -C ws/repo rev-parse HEAD)" = "$before_head" ]
+  [ "$(git -C ws/repo status --porcelain)" = "$before_status" ]
+  [ "$(cat ws/repo/file)" = "$(printf 'a\nMINE\nc')" ]
+  [ "$(cat ws/repo/untracked.txt)" = "scratch" ]
+  ! grep -q '<<<<<<<' ws/repo/file
+  [ -z "$(git -C ws/repo stash list)" ]
+}
+
+@test "autostash: staged and unstaged changes keep their state" {
+  make_edited repo
+  echo staged >ws/repo/new.txt && git -C ws/repo add new.txt
+  printf 'a\nb\nc\nmine\n' >ws/repo/file
+  run pullr ws
+  [[ "$output" == *"local changes reapplied"* ]]
+  [ "$(git -C ws/repo diff --cached --name-only)" = "new.txt" ]
+  [ "$(git -C ws/repo diff --name-only)" = "file" ]
+}
+
+@test "autostash: an untracked file that collides with an incoming one rolls back" {
+  clone repo
+  echo upstream >seed/new && git -C seed add new && git -C seed commit -q -m new && git -C seed push -q origin main
+  echo mine >ws/repo/new
+  local before
+  before="$(git -C ws/repo rev-parse HEAD)"
+  run pullr ws
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"~ repo (main, 1 commit held back because local changes conflict with them)"* ]]
+  [ "$(git -C ws/repo rev-parse HEAD)" = "$before" ]
+  [ "$(cat ws/repo/new)" = "mine" ]
+  [ "$(git -C ws/repo status --porcelain)" = "?? new" ]
+  [ -z "$(git -C ws/repo stash list)" ]
+}
+
+@test "autostash leaves the user's own stash entries alone" {
+  make_edited repo
+  echo keep >ws/repo/other && git -C ws/repo stash push -q --include-untracked -m "users own"
+  printf 'a\nb\nc\nmine\n' >ws/repo/file
+  run pullr ws
+  [[ "$output" == *"local changes reapplied"* ]]
+  [ "$(git -C ws/repo stash list --format=%s)" = "On main: users own" ]
+}
+
+@test "autostash with --rebase: rebases local commits and reapplies local edits" {
+  make_edited repo
+  git -C ws/repo commit -q --allow-empty -m "local commit"
+  git -C seed commit -q --allow-empty -m more && git -C seed push -q origin main
+  printf 'a\nb\nc\nmine\n' >ws/repo/file
+  run pullr --rebase ws
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"+ repo (main, 2 new commits, 1 rebased, local changes reapplied)"* ]]
+  [ "$(git -C ws/repo log -1 --format=%s)" = "local commit" ]
+  [ "$(cat ws/repo/file)" = "$(printf 'a\nUPSTREAM\nc\nmine')" ]
+}
+
+@test "--dry-run shows which updates would autostash" {
+  make_edited repo
+  printf 'a\nMINE\nc\n' >ws/repo/file
+  run pullr --dry-run ws
+  [[ "$output" == *"+ repo (main, 1 new commit, local changes to autostash)"* ]]
+  [ "$(cat ws/repo/file)" = "$(printf 'a\nMINE\nc')" ]
 }
