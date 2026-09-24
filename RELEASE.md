@@ -26,3 +26,9 @@ It runs as `github-actions[bot]` and:
    new tag, using the `TAP_DEPLOY_KEY` secret (a write deploy key on the tap);
 6. installs from the tap on macOS to verify the formula. (npm is not re-checked:
    it can take over ten minutes to serve a new version.)
+
+The npm, GitHub Packages and Homebrew jobs run in GitHub environments of the
+same names, so each release is listed under the repository's Deployments with
+a link to what it published. The environments only accept the `main` branch.
+npm's trusted publisher is configured with the `npm` environment and rejects
+a publish from anywhere else.
