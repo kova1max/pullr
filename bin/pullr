@@ -36,6 +36,8 @@ Options:
                      set (https://no-color.org) or output is not a terminal.
   -V, --version      Print the version.
   -h, --help         Show this help.
+
+Short options can be combined: -rs is -r -s, and -j8 or -rj 8 set the jobs.
 EOF
 }
 
@@ -50,6 +52,16 @@ root=""
 
 while (($#)); do
   case "$1" in
+    # bundled short options: split -rs into -r -s, and -j8 into -j 8
+    -[!-]?*)
+      opt="${1:1:1}" rest="${1:2}"
+      shift
+      if [[ "$opt" == j ]]; then
+        set -- -j "$rest" "$@"
+      else
+        set -- "-$opt" "-$rest" "$@"
+      fi
+      ;;
     -j|--jobs) jobs="${2:-}"; shift 2 || { usage >&2; exit 2; } ;;
     --jobs=*) jobs="${1#*=}"; shift ;;
     --max-depth) max_depth="${2:-}"; shift 2 || { usage >&2; exit 2; } ;;

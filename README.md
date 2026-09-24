@@ -78,6 +78,9 @@ first. It will never:
 pullr [options] [DIR]
 ```
 
+Short options can be combined: `-rs` is `-r -s`, and `-j8` or `-rj 8` set
+the number of jobs.
+
 | Option&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; | Default | Meaning |
 | :--- | :--- | :--- |
 | `DIR` | current&nbsp;directory | Where to look for repositories |
