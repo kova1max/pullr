@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Recursively find git repos under a directory and fast-forward pull each one.
-# Usage: pullr [--jobs N] [--max-depth N] [--dry-run] [--rebase] [--submodules] [--no-color] [DIR]
+# Usage: pullr [--jobs N] [--max-depth N] [--dry-run] [--rebase] [--no-autostash] [--submodules] [--no-color] [DIR]
 set -euo pipefail
 
 VERSION="0.7.0" # set by the release workflow
@@ -24,6 +24,11 @@ Options:
                      refusing a branch that has diverged (git pull --rebase).
                      A rebase that hits a conflict is aborted, leaving the
                      repository as it was.
+      --no-autostash Don't stash local changes that are in the way of an
+                     update. By default they are stashed, the update is
+                     made and they are re-applied; if re-applying conflicts,
+                     the repository is put back exactly as it was.
+      --autostash    The default; accepted for scripts that want to be explicit.
       --submodules   Also fast-forward each submodule that is checked out on a
                      branch, with the same rules as any other repository.
                      Submodules on a detached HEAD are skipped.
@@ -37,6 +42,7 @@ EOF
 mode=pull
 jobs=8
 rebase=0
+autostash=1
 submodules=0
 color=1
 max_depth=2
@@ -50,6 +56,8 @@ while (($#)); do
     --max-depth=*) max_depth="${1#*=}"; shift ;;
     -n|--dry-run) mode=dryrun; shift ;;
     -r|--rebase) rebase=1; shift ;;
+    --autostash) autostash=1; shift ;;
+    --no-autostash) autostash=0; shift ;;
     --submodules) submodules=1; shift ;;
     --no-color) color=0; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -125,8 +133,8 @@ report_diverged() {
 
 report_dirty() {
   printf 'dirty\t%s\n' "$1"
-  printf '%s~%s %s %s(%s, %s held back by local changes)%s\n' \
-    "$yellow" "$reset" "$1" "$dim" "$2" "$(commits "$3")" "$reset"
+  printf '%s~%s %s %s(%s, %s held back %s)%s\n' \
+    "$yellow" "$reset" "$1" "$dim" "$2" "$(commits "$3")" "${4:-by local changes}" "$reset"
 }
 
 report_current() {
@@ -138,6 +146,7 @@ report_updated() {
   local note
   note="$3 new commit$([[ "$3" == 1 ]] || printf s)"
   [[ "$4" == 0 ]] || note+=", $4 $5"
+  [[ -z "${6:-}" ]] || note+=", $6"
   echo updated
   printf '%s+%s %s %s(%s, %s)%s\n' "$green" "$reset" "$1" "$dim" "$2" "$note" "$reset"
 }
@@ -178,6 +187,8 @@ pull_repo() {
     # git refuses, touching nothing, when local changes are in the way
     if out="$(git -C "$repo" merge --ff-only --quiet '@{upstream}' 2>&1)"; then
       report_synced "$repo" "$rel" "$branch" "$behind" 0 ""
+    elif has_local_changes "$repo" && [[ "$autostash" == 1 ]]; then
+      autostash_update "$repo" "$rel" "$branch" "$behind" 0 ff
     elif has_local_changes "$repo"; then
       report_dirty "$rel" "$branch" "$behind"
     else
@@ -185,6 +196,8 @@ pull_repo() {
     fi
   elif [[ "$rebase" == 0 ]]; then
     report_diverged "$rel" "$branch" "$behind" "$ahead"
+  elif has_tracked_changes "$repo" && [[ "$autostash" == 1 ]]; then
+    autostash_update "$repo" "$rel" "$branch" "$behind" "$ahead" rebase
   elif has_tracked_changes "$repo"; then
     report_dirty "$rel" "$branch" "$behind"
   elif out="$(git -C "$repo" rebase --quiet '@{upstream}' 2>&1)"; then
@@ -202,11 +215,87 @@ pull_repo() {
   fi
 }
 
+# Local changes are in the way of the update ($6: ff or rebase). Stash them,
+# update, and re-apply them. If re-applying is anything but clean, put the
+# repository back exactly as it was and report it as dirty. The stash is only
+# dropped once its changes are back in the working tree.
+autostash_update() {
+  local repo="$1" rel="$2" branch="$3" behind="$4" ahead="$5" how="$6"
+  local before stash out
+  before="$(git -C "$repo" rev-parse HEAD)"
+  if ! out="$(git -C "$repo" stash push --include-untracked --quiet -m "pullr autostash" 2>&1)" ||
+    ! stash="$(git -C "$repo" rev-parse --verify --quiet refs/stash)"; then
+    report_failed "$rel" "$branch" "could not stash local changes:"$'\n'"$out"
+    return
+  fi
+
+  if [[ "$how" == ff ]]; then
+    out="$(git -C "$repo" merge --ff-only --quiet '@{upstream}' 2>&1)"
+  else
+    out="$(git -C "$repo" rebase --quiet '@{upstream}' 2>&1)"
+  fi || {
+    # Not caused by local changes - they were stashed. Undo, then restore
+    # them onto the commit they came from, where they apply cleanly.
+    git -C "$repo" rebase --abort >/dev/null 2>&1 || true
+    if restore_stash "$repo" "$stash"; then
+      report_failed "$rel" "$branch" "$out"
+    else
+      report_failed "$rel" "$branch" "$out"$'\n'"$(stash_kept "$repo")"
+    fi
+    return
+  }
+
+  if git -C "$repo" stash apply --index --quiet "$stash" >/dev/null 2>&1; then
+    drop_stash "$repo" "$stash"
+    local verb=""
+    [[ "$how" == ff ]] || verb=rebased
+    report_synced "$repo" "$rel" "$branch" "$behind" "$([[ "$how" == ff ]] && echo 0 || echo "$ahead")" "$verb" "local changes reapplied"
+    return
+  fi
+
+  # Conflict: go back to where we started.
+  git -C "$repo" reset --hard --quiet "$before"
+  clear_restored_untracked "$repo" "$stash"
+  if restore_stash "$repo" "$stash"; then
+    report_dirty "$rel" "$branch" "$behind" "because local changes conflict with them"
+  else
+    report_failed "$rel" "$branch" "could not re-apply local changes after an update conflict."$'\n'"$(stash_kept "$repo")"
+  fi
+}
+
+# Re-apply a stash onto the commit it was made from, then drop it.
+restore_stash() {
+  git -C "$1" stash apply --index --quiet "$2" >/dev/null 2>&1 || return 1
+  drop_stash "$1" "$2"
+}
+
+# `git stash drop` takes stash@{n}, not a commit: find the entry that is ours.
+drop_stash() {
+  local ref
+  ref="$(git -C "$1" stash list --format='%gd %H' | awk -v c="$2" '$2 == c { print $1; exit }')"
+  [[ -z "$ref" ]] || git -C "$1" stash drop --quiet "$ref" >/dev/null 2>&1 || true
+}
+
+# A failed `stash apply` may already have written the stash's untracked files
+# back. They were moved into the stash, so anything at those paths now came
+# from that apply; remove them so the stash can be applied again.
+clear_restored_untracked() {
+  local path
+  git -C "$1" rev-parse --verify --quiet "$2^3" >/dev/null || return 0
+  while IFS= read -r path; do
+    [[ -z "$path" ]] || rm -f -- "$1/$path"
+  done < <(git -C "$1" ls-tree -r --name-only "$2^3")
+}
+
+stash_kept() {
+  printf 'Your local changes are safe in the stash (git -C %q stash list).' "$1"
+}
+
 # The repository was updated; report it, unless syncing submodules failed.
 report_synced() {
   local out
   if out="$(sync_submodules "$1")"; then
-    report_updated "$2" "$3" "$4" "$5" "$6"
+    report_updated "$2" "$3" "$4" "$5" "$6" "${7:-}"
   else
     report_failed "$2" "$3" "updated, but updating submodules failed:"$'\n'"$out"
   fi
@@ -230,13 +319,17 @@ dryrun_repo() {
   if [[ "$behind" == 0 ]]; then
     report_current "$rel" "$branch"
   elif [[ "$ahead" == 0 ]]; then
-    if changes_block_update "$repo"; then
+    if changes_block_update "$repo" && [[ "$autostash" == 1 ]]; then
+      report_updated "$rel" "$branch" "$behind" 0 "" "local changes to autostash"
+    elif changes_block_update "$repo"; then
       report_dirty "$rel" "$branch" "$behind"
     else
       report_updated "$rel" "$branch" "$behind" 0 ""
     fi
   elif [[ "$rebase" == 0 ]]; then
     report_diverged "$rel" "$branch" "$behind" "$ahead"
+  elif has_tracked_changes "$repo" && [[ "$autostash" == 1 ]]; then
+    report_updated "$rel" "$branch" "$behind" "$ahead" "to rebase" "local changes to autostash"
   elif has_tracked_changes "$repo"; then
     report_dirty "$rel" "$branch" "$behind"
   else
@@ -316,8 +409,8 @@ if ((jobs > 1 && count > 1)); then
   scratch="$(mktemp -d)"
   trap 'rm -rf "$scratch"' EXIT
   export GIT_TERMINAL_PROMPT=0
-  export mode rebase submodules root green yellow red dim reset
-  export -f worker pull_repo dryrun_repo repo_label indented prepare report_failed report_diverged report_dirty report_current report_updated report_synced commits has_tracked_changes has_local_changes sync_submodules changes_block_update
+  export mode rebase autostash submodules root green yellow red dim reset
+  export -f worker pull_repo dryrun_repo repo_label indented prepare report_failed report_diverged report_dirty report_current report_updated report_synced autostash_update restore_stash drop_stash clear_restored_untracked stash_kept commits has_tracked_changes has_local_changes sync_submodules changes_block_update
   # shellcheck disable=SC2016  # the single-quoted body runs inside the child shell
   for ((i = 0; i < count; i++)); do printf '%s\0%s\0' "$i" "${repos[i]}"; done |
     xargs -0 -n 2 -P "$jobs" "$BASH" -c 'worker "$@"' _ "$scratch" &

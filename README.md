@@ -13,13 +13,13 @@ everything current means `cd`-ing into each one.
 ```console
 $ pullr ~/work
 + api (main, 3 new commits)
-= web (main)
-~ docs (main, 2 commits held back by local changes)
++ web (main, 1 new commit, local changes reapplied)
+~ docs (main, 2 commits held back because local changes conflict with them)
 - scratch (main has no upstream)
 x infra (main)
     diverged from upstream (behind 2, ahead 1): cannot fast-forward
 
-Repos: 5  updated: 1  up to date: 1  dirty: 1  skipped: 1  failed: 1
+Repos: 5  updated: 2  up to date: 0  dirty: 1  skipped: 1  failed: 1
 Dirty: docs
 Failed: infra
 ```
@@ -55,10 +55,13 @@ first. It will never:
   failed and left exactly as it was. Rebasing it is opt-in with `--rebase`,
   and a rebase that hits a conflict is aborted, leaving the repository as it
   was.
-- **Stash, overwrite or discard your changes.** There is no auto-stash. If
-  local edits or untracked files are in the way of incoming changes, the
-  repository is reported as dirty and left as it was; edits that don't touch
-  incoming files don't stop the update.
+- **Leave your changes half-merged, or lose them.** When local edits or
+  untracked files are in the way of an update, pullr stashes them, updates,
+  and re-applies them on top. If they conflict with the incoming commits, it
+  puts the repository back exactly as it was - same commit, same files, same
+  staged and unstaged changes, no stash left behind - and reports it as
+  dirty. Edits that don't touch incoming files are never stashed at all.
+  `--no-autostash` skips the stash and just reports the repository as dirty.
 - **Touch a repository on a detached `HEAD`**, or a branch with no upstream.
   Both are skipped.
 - **Enter a nested repository.** Repositories inside another repository are
@@ -82,6 +85,7 @@ pullr [options] [DIR]
 | `--max-depth N` | `2` | How many directory levels below `DIR` to search. `0` = only `DIR` itself, `1` = `DIR` and its direct children, ... |
 | `-n`, `--dry-run` | | Show what a run would do without pulling, see below |
 | `-r`, `--rebase` | off | Rebase local commits onto the upstream instead of refusing a diverged branch (`git pull --rebase`). A rebase that hits a conflict is aborted and the repository is left as it was. |
+| `--no-autostash` | | Don't stash local changes that are in the way of an update; report the repository as dirty instead. Autostash is on by default, see "What it will never do". |
 | `--submodules` | off | Also fast-forward each submodule that is checked out on a branch, see below |
 | `--no-color` | | Disable colored output. Also disabled when the [`NO_COLOR`](https://no-color.org) environment variable is set, or when output is not a terminal. |
 | `-V`, `--version` | | Print the version |
@@ -90,7 +94,7 @@ pullr [options] [DIR]
 ### Output
 
 Each repository gets one line: `+` updated, `=` already up to date, `~`
-dirty (local changes are in the way of the update, which is held back), `-`
+dirty (local changes conflict with the update, which is held back), `-`
 skipped, `x` failed (with the reason indented below it). Exits `1` if any
 pull failed, `2` on invalid arguments, `0` otherwise; a dirty repository is
 not a failure.
@@ -113,9 +117,11 @@ Failed: infra
 ```
 
 It runs `git fetch` in each repository first, so the answer reflects the
-remote as it is now, then prints the same lines a real run would (with
-`--rebase`, a diverged repository shows as `+ ... , 2 to rebase` instead of
-`x`; whether the rebase would conflict is only known by running it). Fetching
+remote as it is now, then prints the same lines a real run would. An update
+that would need to stash local changes shows as `+ ... , local changes to
+autostash`, and with `--rebase` a diverged repository shows as
+`+ ... , 2 to rebase` instead of `x`; whether re-applying or rebasing would
+conflict is only known by running it. Fetching
 only updates remote-tracking refs: the working tree and current branch are
 never modified. Exit codes match a real run.
 
@@ -148,7 +154,7 @@ skipped, and uninitialized ones are left out.
 | Pulls in parallel | 8 at a time by default | all at once, no limit | no | opt-in | opt-in |
 | Update | fetch + fast&#8209;forward | `git pull` | fetch + fast&#8209;forward | `git pull` | no built-in pull |
 | Merge commits | never | depends on your git config | never | depends on your git config | depends on your command |
-| Local changes in the way | reported as dirty | git's error | skipped | git's error | - |
+| Local changes in the way | stashed and reapplied; rolled back on conflict | git's error | skipped | git's error | - |
 | Dry run | yes | no | no | no | prints commands |
 
 **Why "8 at a time" and not "all at once".** Many self-hosted git servers
