@@ -579,3 +579,11 @@ make_edited() {
   [[ "$output" == *"+ repo (main, 1 new commit, local changes to autostash)"* ]]
   [ "$(cat ws/repo/file)" = "$(printf 'a\nMINE\nc')" ]
 }
+
+@test "-s is short for --submodules" {
+  make_app_with_submodule
+  advance_lib 2
+  run pullr -s ws
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"  + app/lib (main, 1 new commit)"* ]]
+}

@@ -86,7 +86,7 @@ pullr [options] [DIR]
 | `-n`, `--dry-run` | | Show what a run would do without pulling, see below |
 | `-r`, `--rebase` | off | Rebase local commits onto the upstream instead of refusing a diverged branch (`git pull --rebase`). A rebase that hits a conflict is aborted and the repository is left as it was. |
 | `--no-autostash` | | Don't stash local changes that are in the way of an update; report the repository as dirty instead. Autostash is on by default, see "What it will never do". |
-| `--submodules` | off | Also fast-forward each submodule that is checked out on a branch, see below |
+| `-s`, `--submodules` | off | Also fast-forward each submodule that is checked out on a branch, see below |
 | `--no-color` | | Disable colored output. Also disabled when the [`NO_COLOR`](https://no-color.org) environment variable is set, or when output is not a terminal. |
 | `-V`, `--version` | | Print the version |
 | `-h`, `--help` | | Show help |
