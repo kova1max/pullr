@@ -587,3 +587,28 @@ make_edited() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"  + app/lib (main, 1 new commit)"* ]]
 }
+
+@test "short options combine: -sn, -j8, -snj 1 and -rs" {
+  make_app_with_submodule
+  git -C ws/app/lib commit -q --allow-empty -m "my lib work"
+  advance_lib 2
+  run pullr -sn ws
+  [[ "$output" == "Dry run: nothing will be pulled."* ]]
+  [[ "$output" == *"  x app/lib (main)"* ]]
+  run pullr -j8 -n ws
+  [ "$status" -eq 0 ]
+  run pullr -snj 1 ws
+  [[ "$output" == *"  x app/lib (main)"* ]]
+  run pullr -rs ws
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"  + app/lib (main, 1 new commit, 1 rebased)"* ]]
+  [ "$(git -C ws/app/lib log -1 --format=%s)" = "my lib work" ]
+}
+
+@test "an unknown letter in a bundle is rejected" {
+  run pullr -rx ws
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Unknown option: -x"* ]]
+  run pullr -rj
+  [ "$status" -eq 2 ]
+}
