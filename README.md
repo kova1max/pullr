@@ -7,6 +7,8 @@
 
 Safe, fast-forward pull every git repository under a directory.
 
+![Terminal recording of pullr --dry-run ~/work previewing six repositories, then pullr ~/work updating api and web, holding back docs on conflicting local changes, skipping scratch with no upstream, and failing infra which diverged from upstream](assets/pullr-demo.gif)
+
 Built for workspaces made of many independent repositories, where keeping
 everything current means `cd`-ing into each one.
 
